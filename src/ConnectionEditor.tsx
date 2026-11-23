@@ -45,7 +45,7 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
   const [youtubeMode, setYoutubeMode] = useState<YouTubeAuthMode>(() => editing ? youtubeAuthMode(editConfig, configuredFields) : 'apiKey');
   const connectionFields = fieldsFor(adding, youtubeMode);
   const youtubeDevice = adding === 'youtube' && youtubeMode === 'innertube';
-  const tvClientReady = googleTvConfigured || (configuredFields.includes('tvClientId') && configuredFields.includes('tvClientSecret'));
+
   const newIptv = !editing && ['xtream', 'm3u'].includes(adding);
   const formRef = useRef<HTMLFormElement>(null), categoryRequest = useRef<AbortController | null>(null);
   const [categories, setCategories] = useState<IptvCategory[]>([]), [selection, setSelection] = useState<IptvSelection>([]);
@@ -182,12 +182,12 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
           )}
           {youtubeDevice && (
             <p className="form-help">
-              Browses YouTube the way the YouTube TV app does: your real Home feed, subscriptions, playlists and watch history, with no Data API quota.
-              {googleTvConfigured ? ' This server already has a Google TV OAuth client, so you can sign in right away.' : ' In Google Cloud, create an OAuth client of type “TVs and Limited Input devices” with the YouTube Data API v3 enabled, then save its ID and secret here.'}
+              Browses YouTube the way the YouTube TV app does: your real Home feed, subscriptions, playlists and watch history, with no Data API quota and no Google Cloud setup. You get a short code to enter at google.com/device on your phone.
+              {googleTvConfigured ? ' This server also has its own Google TV OAuth client configured.' : ' Optionally use your own OAuth client of type “TVs and Limited Input devices” instead.'}
               {!editing && ' Save first; the sign-in code appears next.'}
             </p>
           )}
-          {youtubeDevice && editing && <YouTubeDeviceSignIn connectionId={editing.id} signedIn={!!editing.oauthAuthorized && editing.authMode === 'innertube'} clientReady={tvClientReady} onChanged={async () => { await onRefresh?.(); }} />}
+          {youtubeDevice && editing && <YouTubeDeviceSignIn connectionId={editing.id} signedIn={!!editing.oauthAuthorized && editing.authMode === 'innertube'} onChanged={async () => { await onRefresh?.(); }} />}
           {managedGoogle&&adding==='youtube'&&youtubeMode==='innertube'?null:managedGoogle&&['drive','youtube'].includes(adding)&&<div className="plex-signin"><p>{adding==='drive'?'Connect your Google account to browse your videos.':'Connect your Google account for subscriptions and playlists.'}</p><button className="button primary full" disabled={busy||!googleConfigured} onClick={()=>void startGoogle?.()}>Sign in with Google <ArrowUpRight size={17}/></button>{!googleConfigured&&<p className="form-help">Google sign-in is not configured on this server yet.</p>}{error&&<p className="form-error" role="alert">{error}</p>}</div>}
           {!managedGoogle&&adding === "youtube" && youtubeMode !== 'innertube' && (
             <div className="segmented connection-mode">
@@ -262,7 +262,7 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
                   type={f.secret ? "password" : "text"}
                   defaultValue={editConfig[f.key] || ""}
                   required={
-                    !f.optional && !configuredFields.includes(f.key) && !(adding==='m3u' && f.key==='url' && playlist.trim()) || (youtubeDevice && !googleTvConfigured && !configuredFields.includes(f.key))
+                    !f.optional && !configuredFields.includes(f.key) && !(adding==='m3u' && f.key==='url' && playlist.trim())
                   }
                   placeholder={
                     configuredFields.includes(f.key) && !editConfig[f.key]

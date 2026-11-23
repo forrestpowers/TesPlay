@@ -10,9 +10,14 @@ import https from 'node:https';
 import { providerError, validateRemoteUrl } from './media.js';
 import { plainText } from './text.js';
 
+// Google's documented endpoints for a client you create yourself ("TVs and Limited Input devices").
 const DEVICE_CODE_URL = 'https://oauth2.googleapis.com/device/code';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
+// The endpoints YouTube's own TV app uses with its built-in client (what youtubei.js and sites like gigaplay use).
+const YT_DEVICE_CODE_URL = 'https://www.youtube.com/o/oauth2/device/code';
+const YT_TOKEN_URL = 'https://www.youtube.com/o/oauth2/token';
+const YT_REVOKE_URL = 'https://www.youtube.com/o/oauth2/revoke';
 // YouTube's TV app requests the legacy YouTube scope, which InnerTube expects on a
 // Bearer token. Google rejects it for some custom clients; the Data API scope is
 // the documented alternative for a TV-type client.
@@ -163,8 +168,38 @@ export function createInnertubeService({
   const clients = new Map(); // connectionId -> { key, promise }
   const pages = new Map(); // continuation token -> { feed, userId, connectionId, expires, map }
   let anonymous = null, anonymousExpires = 0, library = null;
-  const tvClient = c => ({ clientId: c.config.tvClientId || env.GOOGLE_TV_CLIENT_ID || '', clientSecret: c.config.tvClientSecret || env.GOOGLE_TV_CLIENT_SECRET || '' });
-  const configured = c => { const client = tvClient(c); return Boolean(client.clientId && client.clientSecret); };
+  // A client the user created in Google Cloud wins; otherwise YouTube's own TV-app client, read
+  // from youtube.com/tv by youtubei.js and remembered on the connection after a successful sign-in.
+  const customClient = c => {
+    const clientId = c.config.tvClientId || env.GOOGLE_TV_CLIENT_ID || '', clientSecret = c.config.tvClientSecret || env.GOOGLE_TV_CLIENT_SECRET || '';
+    return clientId && clientSecret ? { clientId, clientSecret, kind: 'custom' } : null;
+  };
+  let builtin = null, builtinExpires = 0;
+  async function builtinClient() {
+    if (!builtin || builtinExpires < now()) {
+      builtinExpires = now() + 12 * 3600000;
+      builtin = (async () => {
+        const yt = await build({ retrieve_player: false });
+        const identity = await timed(yt.session.oauth.getClientID());
+        if (!identity?.client_id || !identity?.client_secret) throw providerError('YouTube did not provide its TV sign-in client. Try again later or save your own TV OAuth client.', 502);
+        return { clientId: identity.client_id, clientSecret: identity.client_secret, kind: 'youtube' };
+      })();
+      builtin.catch(() => { builtin = null; });
+    }
+    return builtin;
+  }
+  const savedBuiltin = c => c.config.tvBuiltinClientId && c.config.tvBuiltinClientSecret ? { clientId: c.config.tvBuiltinClientId, clientSecret: c.config.tvBuiltinClientSecret, kind: 'youtube' } : null;
+  const tvClient = async (c, fresh = false) => customClient(c) || (!fresh && savedBuiltin(c)) || builtinClient();
+  const configured = c => Boolean(customClient(c));
+  const endpoints = kind => kind === 'youtube'
+    ? { code: YT_DEVICE_CODE_URL, token: YT_TOKEN_URL, revoke: YT_REVOKE_URL, deviceGrant: 'http://oauth.net/grant_type/device/1.0', codeKey: 'code', json: true }
+    : { code: DEVICE_CODE_URL, token: TOKEN_URL, revoke: REVOKE_URL, deviceGrant: 'urn:ietf:params:oauth:grant-type:device_code', codeKey: 'device_code', json: false };
+  const post = async (url, body, json) => {
+    const response = await fetchImpl(url, { method: 'POST', headers: { 'Content-Type': json ? 'application/json' : 'application/x-www-form-urlencoded' }, body: json ? JSON.stringify(body) : new URLSearchParams(body).toString(), signal: AbortSignal.timeout(15000) });
+    const data = await response.json().catch(() => ({}));
+    if (data.error_code && !data.error) data.error = data.error_code;
+    return { ok: response.ok && !data.error, data };
+  };
   async function youtubei() {
     library ??= import('youtubei.js');
     return library;
@@ -177,31 +212,26 @@ export function createInnertubeService({
     return Innertube.create({ cache, generate_session_locally: true, retrieve_player: true, ...options });
   }
   const timed = (promise, message = 'YouTube did not respond in time.') => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(providerError(message, 504)), requestTimeout).unref?.())]);
-  async function googleToken(body) {
-    const response = await fetchImpl(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString(), signal: AbortSignal.timeout(15000) });
-    const data = await response.json().catch(() => ({}));
-    return { ok: response.ok, data };
-  }
+  const googleToken = (client, body) => post(endpoints(client.kind).token, { client_id: client.clientId, client_secret: client.clientSecret, ...body }, endpoints(client.kind).json);
   async function startSignIn(req, c) {
     if (c.shared) throw providerError('Only the connection owner can sign in to this shared connection.', 403);
-    const client = tvClient(c);
-    if (!client.clientId || !client.clientSecret) throw providerError('Save a Google TV OAuth client ID and secret first, or set GOOGLE_TV_CLIENT_ID and GOOGLE_TV_CLIENT_SECRET on the server.');
     for (const [key, value] of pending) if (value.expires < now()) pending.delete(key);
     if (pending.size > 200) throw providerError('Too many pending Google sign-ins. Try again shortly.', 429);
+    const client = await tvClient(c, true);
+    const api = endpoints(client.kind);
     let result;
-    for (const scope of TV_SCOPES) {
-      const response = await fetchImpl(DEVICE_CODE_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: client.clientId, scope }).toString(), signal: AbortSignal.timeout(15000) });
-      const data = await response.json().catch(() => ({}));
-      if (response.ok && data.device_code && data.user_code) { result = { ...data, scope }; break; }
+    for (const scope of client.kind === 'youtube' ? [TV_SCOPES[0]] : TV_SCOPES) {
+      const { ok, data } = await post(api.code, { client_id: client.clientId, scope, ...(api.json ? { device_id: randomBytes(16).toString('hex'), device_model: 'ytlr::' } : {}) }, api.json);
+      if (ok && data.device_code && data.user_code) { result = { ...data, scope }; break; }
       if (data.error === 'invalid_scope') continue;
-      if (data.error === 'invalid_client') throw providerError('Google rejected the TV OAuth client ID. Check it in YouTube settings; the client type must be "TVs and Limited Input devices".', 409);
+      if (data.error === 'invalid_client') throw providerError(client.kind === 'youtube' ? 'YouTube rejected its TV sign-in client. Try again later, or save your own Google TV OAuth client in YouTube settings.' : 'Google rejected the TV OAuth client ID. Check it in YouTube settings; the client type must be "TVs and Limited Input devices".', 409);
       throw providerError('Google could not start device sign-in. Try again in a moment.', 502);
     }
     if (!result) throw providerError('Google rejected every YouTube scope for this OAuth client. Enable the YouTube Data API v3 in the Google Cloud project and try again.', 409);
     const entry = {
       deviceCode: result.device_code, userCode: result.user_code, verificationUrl: result.verification_url || 'https://www.google.com/device',
       interval: Math.min(Math.max(Number(result.interval) || 5, 3), 30) * 1000, expires: now() + (Number(result.expires_in) || 1800) * 1000,
-      userId: req.user.id, clientId: client.clientId, scope: result.scope, nextPoll: 0, status: 'pending',
+      userId: req.user.id, client, scope: result.scope, nextPoll: 0, status: 'pending',
     };
     pending.set(c.id, entry);
     return publicStatus(entry);
@@ -213,22 +243,27 @@ export function createInnertubeService({
     if (entry.expires < now()) { pending.delete(c.id); return { status: 'expired' }; }
     if (entry.nextPoll > now()) return publicStatus(entry);
     entry.nextPoll = now() + entry.interval;
-    const client = tvClient(c);
-    if (client.clientId !== entry.clientId) { pending.delete(c.id); throw providerError('Google client settings changed. Start sign-in again.'); }
-    const { ok, data } = await googleToken({ client_id: client.clientId, client_secret: client.clientSecret, device_code: entry.deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' });
+    const client = entry.client;
+    if (customClient(c)?.clientId !== (client.kind === 'custom' ? client.clientId : undefined)) { pending.delete(c.id); throw providerError('Google client settings changed. Start sign-in again.'); }
+    const api = endpoints(client.kind);
+    const { ok, data } = await googleToken(client, { [api.codeKey]: entry.deviceCode, grant_type: api.deviceGrant });
     if (!ok || !data.access_token) {
       if (data.error === 'authorization_pending') return publicStatus(entry);
       if (data.error === 'slow_down') { entry.interval = Math.min(entry.interval + 5000, 60000); return publicStatus(entry); }
       pending.delete(c.id);
       if (data.error === 'access_denied') return { status: 'denied' };
       if (data.error === 'expired_token') return { status: 'expired' };
-      if (data.error === 'invalid_client') throw providerError('Google rejected the TV OAuth client secret. Check it in YouTube settings and start again.', 409);
+      if (data.error === 'invalid_client') throw providerError(client.kind === 'youtube' ? 'YouTube rejected its TV sign-in client. Start again later, or save your own Google TV OAuth client.' : 'Google rejected the TV OAuth client secret. Check it in YouTube settings and start again.', 409);
       throw providerError('Google did not complete the sign-in. Start again.', 502);
     }
     pending.delete(c.id);
     if (!data.refresh_token) throw providerError('Google did not return a refresh token. Remove TesPlay from your Google account permissions and sign in again.', 502);
     clients.delete(c.id);
-    saveConfig(req, c, { authMode: 'innertube', tvAccessToken: data.access_token, tvRefreshToken: data.refresh_token, tvExpiresAt: now() + Number(data.expires_in || 3600) * 1000, tvScope: entry.scope });
+    saveConfig(req, c, {
+      authMode: 'innertube', tvAccessToken: data.access_token, tvRefreshToken: data.refresh_token, tvExpiresAt: now() + Number(data.expires_in || 3600) * 1000, tvScope: entry.scope,
+      // Tokens belong to the client that issued them; keep YouTube's client beside them for refreshes.
+      tvBuiltinClientId: client.kind === 'youtube' ? client.clientId : null, tvBuiltinClientSecret: client.kind === 'youtube' ? client.clientSecret : null,
+    });
     return { status: 'authorized' };
   }
   function cancelSignIn(req, c) { const entry = pending.get(c.id); if (entry && entry.userId === req.user.id) pending.delete(c.id); }
@@ -236,20 +271,20 @@ export function createInnertubeService({
     if (c.shared) throw providerError('Only the connection owner can sign out of this shared connection.', 403);
     cancelSignIn(req, c); clients.delete(c.id);
     const token = c.config.tvRefreshToken || c.config.tvAccessToken;
-    if (token) { try { await fetchImpl(`${REVOKE_URL}?token=${encodeURIComponent(token)}`, { method: 'POST', signal: AbortSignal.timeout(10000) }); } catch { /* Local sign-out still proceeds. */ } }
-    saveConfig(req, c, { tvAccessToken: null, tvRefreshToken: null, tvExpiresAt: 0 });
+    if (token) { try { await fetchImpl(`${endpoints(savedBuiltin(c) && !customClient(c) ? 'youtube' : 'custom').revoke}?token=${encodeURIComponent(token)}`, { method: 'POST', signal: AbortSignal.timeout(10000) }); } catch { /* Local sign-out still proceeds. */ } }
+    saveConfig(req, c, { tvAccessToken: null, tvRefreshToken: null, tvExpiresAt: 0, tvBuiltinClientId: null, tvBuiltinClientSecret: null });
   }
   const refreshes = new Map();
   async function accessToken(req, c) {
     const current = getConnection(req, c.id);
-    const client = tvClient(current);
     if (!innertubeSignedIn(current)) throw providerError(SIGN_IN_REQUIRED, 409);
+    const client = await tvClient(current);
     if (current.config.tvAccessToken && Number(current.config.tvExpiresAt) > now() + 60000) return { accessToken: current.config.tvAccessToken, refreshToken: current.config.tvRefreshToken, expiresAt: Number(current.config.tvExpiresAt), client };
     const key = `${c.id}:${createHash('sha256').update(current.config.tvRefreshToken).digest('hex')}`;
     let flight = refreshes.get(key);
     if (!flight) {
       flight = (async () => {
-        const { ok, data } = await googleToken({ client_id: client.clientId, client_secret: client.clientSecret, refresh_token: current.config.tvRefreshToken, grant_type: 'refresh_token' });
+        const { ok, data } = await googleToken(client, { refresh_token: current.config.tvRefreshToken, grant_type: 'refresh_token' });
         if (!ok || !data.access_token) {
           if (data.error === 'invalid_grant') throw providerError(RECONNECT_REQUIRED, 409);
           if (data.error === 'invalid_client') throw providerError('Google rejected the TV OAuth client settings. Check the client ID and secret in YouTube settings, then sign in again.', 409);

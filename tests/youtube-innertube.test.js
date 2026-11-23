@@ -64,7 +64,8 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
   const saved = [];
   const fetchCalls = [];
   const fetchImpl = async (url, init) => {
-    fetchCalls.push({ url: String(url), body: Object.fromEntries(new URLSearchParams(init?.body || '')) });
+    const raw = String(init?.body || '');
+    fetchCalls.push({ url: String(url), json: raw.startsWith('{'), body: raw.startsWith('{') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw)) });
     const next = fetchResponses.shift() || { status: 500, body: { error: 'unexpected' } };
     return { ok: next.status < 300, status: next.status, json: async () => next.body };
   };
@@ -73,7 +74,7 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
   const createInnertube = async (options = {}) => {
     const events = {};
     const yt = { options,
-      session: { on: (name, fn) => { events[name] = fn; }, signIn: async tokens => { yt.session.oauth.oauth2_tokens = tokens; yt.session.logged_in = true; }, oauth: { oauth2_tokens: null, setTokens(t) { this.oauth2_tokens = t; } }, player: { id: 'p' }, logged_in: false },
+      session: { on: (name, fn) => { events[name] = fn; }, signIn: async tokens => { yt.session.oauth.oauth2_tokens = tokens; yt.session.logged_in = true; }, oauth: { oauth2_tokens: null, setTokens(t) { this.oauth2_tokens = t; }, getClientID: async () => ({ client_id: 'yt-tv-client.apps.googleusercontent.com', client_secret: 'yt-tv-secret' }) }, player: { id: 'p' }, logged_in: false },
       calls: [], events,
       getBasicInfo: async (id, options) => { yt.calls.push(['getBasicInfo', id, options.client]); return info(options.client, yt); },
       getHomeFeed: async () => feedOf([{ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run('Home one'), author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' } }], [{ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('Home two') }]),
@@ -114,7 +115,7 @@ test('device sign-in: start requests a code with the TV scopes, status polls Goo
   assert.equal(f.fetchCalls.length, 3);
   f.service._internal.pending.get('c1').nextPoll = 0;
   assert.deepEqual(await f.service.signInStatus(f.req, c), { status: 'authorized' });
-  assert.deepEqual(f.saved.at(-1), { authMode: 'innertube', tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000, tvScope: TV_SCOPES[1] });
+  assert.deepEqual(f.saved.at(-1), { authMode: 'innertube', tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000, tvScope: TV_SCOPES[1], tvBuiltinClientId: null, tvBuiltinClientSecret: null });
   assert.ok(f.service.signedIn(f.connections.get('c1')));
   // Another user cannot read the owner's pending code.
   assert.equal((await f.service.signInStatus({ user: { id: 'other' } }, c)).status, 'authorized');
@@ -131,7 +132,43 @@ test('device sign-in reports denied and expired codes and rejects an unknown cli
   assert.deepEqual(await f.service.signInStatus(f.req, c), { status: 'denied' });
   await assert.rejects(f.service.startSignIn(f.req, c), { status: 409 });
   await assert.rejects(f.service.startSignIn(f.req, { ...c, shared: true }), { status: 403 });
-  await assert.rejects(f.service.startSignIn(f.req, { ...c, config: { authMode: 'innertube' } }), /client ID and secret/);
+});
+
+test("without a custom client the sign-in uses YouTube's own TV-app client through youtube.com's OAuth endpoints and keeps it for refreshes", async () => {
+  const f = fixture({ config: { tvClientId: undefined, tvClientSecret: undefined }, fetchResponses: [
+    { status: 200, body: { device_code: 'dev', user_code: 'WXYZ-1234', verification_url: 'https://www.google.com/device', expires_in: 1800, interval: 5 } },
+    { status: 200, body: { error_code: 'authorization_pending' } },
+    { status: 200, body: { access_token: 'at', refresh_token: 'rt', expires_in: 3600 } },
+    { status: 200, body: { access_token: 'at2', expires_in: 3600 } },
+  ] });
+  const c = f.connections.get('c1');
+  assert.equal(f.service.configured(c), false);
+  const start = await f.service.startSignIn(f.req, c);
+  assert.equal(start.userCode, 'WXYZ-1234');
+  assert.equal(start.verificationUrl, 'https://www.google.com/device');
+  assert.equal(f.fetchCalls[0].url, 'https://www.youtube.com/o/oauth2/device/code');
+  assert.ok(f.fetchCalls[0].json);
+  assert.equal(f.fetchCalls[0].body.client_id, 'yt-tv-client.apps.googleusercontent.com');
+  assert.equal(f.fetchCalls[0].body.scope, TV_SCOPES[0]);
+  assert.equal(f.fetchCalls[0].body.device_model, 'ytlr::');
+  assert.equal(f.created.length, 1, 'one lightweight client reads the TV client identity');
+  assert.equal(f.created[0].options.retrieve_player, false);
+  assert.equal((await f.service.signInStatus(f.req, c)).status, 'pending');
+  assert.equal(f.fetchCalls[1].url, 'https://www.youtube.com/o/oauth2/token');
+  assert.deepEqual(f.fetchCalls[1].body, { client_id: 'yt-tv-client.apps.googleusercontent.com', client_secret: 'yt-tv-secret', code: 'dev', grant_type: 'http://oauth.net/grant_type/device/1.0' });
+  f.service._internal.pending.get('c1').nextPoll = 0;
+  assert.deepEqual(await f.service.signInStatus(f.req, c), { status: 'authorized' });
+  assert.equal(f.saved.at(-1).tvBuiltinClientId, 'yt-tv-client.apps.googleusercontent.com');
+  assert.equal(f.saved.at(-1).tvBuiltinClientSecret, 'yt-tv-secret');
+  // Refreshing later uses the remembered client without reading youtube.com/tv again.
+  c.config.tvExpiresAt = 0;
+  await f.service.home(f.req, c);
+  assert.equal(f.fetchCalls[3].url, 'https://www.youtube.com/o/oauth2/token');
+  assert.equal(f.fetchCalls[3].body.grant_type, 'refresh_token');
+  assert.equal(f.fetchCalls[3].body.client_secret, 'yt-tv-secret');
+  assert.equal(f.created.length, 2);
+  await f.service.signOut(f.req, c);
+  assert.equal(f.saved.at(-1).tvBuiltinClientId, null);
 });
 
 test('browsing uses one signed-in client per connection, refreshes expired tokens through Google and pages through continuations', async () => {

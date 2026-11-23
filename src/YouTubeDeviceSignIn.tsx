@@ -12,10 +12,9 @@ export type DeviceSignInStatus = {
 };
 
 /** Google's device-code sign-in for YouTube: the code is entered on a phone, nothing is typed on this screen. */
-export default function YouTubeDeviceSignIn({ connectionId, signedIn, clientReady, onChanged }: {
+export default function YouTubeDeviceSignIn({ connectionId, signedIn, onChanged }: {
   connectionId: string;
   signedIn: boolean;
-  clientReady: boolean;
   onChanged: () => Promise<void>;
 }) {
   const [state, setState] = useState<DeviceSignInStatus>({ status: signedIn ? 'authorized' : 'none' });
@@ -62,10 +61,9 @@ export default function YouTubeDeviceSignIn({ connectionId, signedIn, clientRead
       ) : (
         <>
           <p>{state.status === 'denied' ? 'Google reported that access was denied. Start again to retry.' : state.status === 'expired' ? 'The code expired before it was entered. Start again for a new code.' : 'Sign in with your Google account to see your real Home feed, subscriptions, playlists and watch history. You enter a short code on your phone; nothing is typed on this screen.'}</p>
-          <button type="button" className="button primary full" disabled={busy || !clientReady} onClick={() => void start()}>
+          <button type="button" className="button primary full" disabled={busy} onClick={() => void start()}>
             {busy ? <LoaderCircle className="spin" size={18} /> : state.status === 'none' ? <ArrowUpRight size={17} /> : <RefreshCw size={17} />} Sign in with Google on this screen
           </button>
-          {!clientReady && <p className="form-help">Save a Google TV OAuth client ID and secret above first, or set GOOGLE_TV_CLIENT_ID and GOOGLE_TV_CLIENT_SECRET on the server.</p>}
         </>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}

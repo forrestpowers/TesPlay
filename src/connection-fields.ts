@@ -81,8 +81,8 @@ const fields: Record<
   ],
 };
 const youtubeTvFields = [
-  { key: 'tvClientId', label: 'Google TV OAuth client ID', placeholder: 'Client ID of a "TVs and Limited Input devices" client', optional: true },
-  { key: 'tvClientSecret', label: 'Google TV OAuth client secret', placeholder: 'Its client secret', secret: true, optional: true },
+  { key: 'tvClientId', label: 'Your own Google TV OAuth client ID (optional)', placeholder: 'Leave empty to sign in like the YouTube TV app', optional: true },
+  { key: 'tvClientSecret', label: 'Its client secret (optional)', placeholder: 'Only with your own client', secret: true, optional: true },
 ];
 export function connectionFields(type: string, mode: YouTubeAuthMode) {
   if (type === 'youtube' && mode === 'innertube') return youtubeTvFields;

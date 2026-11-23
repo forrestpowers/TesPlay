@@ -252,13 +252,12 @@ Google Drive and YouTube OAuth require your own Google web client, the relevant 
 <details>
 <summary><strong>YouTube: sign in on this screen (real Home feed, no API quota)</strong></summary>
 
-This mode browses YouTube the way the YouTube TV app does, signed in to your Google account, so the YouTube hub shows your real **Home** feed, the newest uploads from every subscription, your account **watch history**, quota-free search, channel pages and playlists. Signing in uses Google's device-code flow: TesPlay shows a short code and `google.com/device`; you enter the code on your phone. Nothing is typed on the car screen and no redirect URL is needed.
+This mode browses YouTube the way the YouTube TV app does, signed in to your Google account, so the YouTube hub shows your real **Home** feed, the newest uploads from every subscription, your account **watch history**, quota-free search, channel pages and playlists. Signing in works like a TV: TesPlay shows a short code and `google.com/device`; you enter the code on your phone. Nothing is typed on the car screen, no Google Cloud project and no redirect URL are needed.
 
-1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), enable the **YouTube Data API v3** for your project and create an OAuth client of type **TVs and Limited Input devices**. Add your Google account as a test user if the consent screen is in testing.
-2. Either set `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET` in `.env` (the sign-in button then works for every YouTube connection), or paste the ID and secret into the connection when you add YouTube.
-3. In TesPlay, add or edit **YouTube**, choose **Sign in on this screen**, save, then press **Sign in with Google on this screen** and enter the code on your phone. The screen updates by itself once Google approves.
+1. In TesPlay, add or edit **YouTube**, choose **Sign in on this screen** and save.
+2. Press **Sign in with Google on this screen**, open `google.com/device` on your phone (or scan the QR code) and enter the code. The screen updates by itself once Google approves.
 
-Refresh tokens are stored encrypted with the connection and refreshed server-side. Choose **Sign out of Google** in the same editor to revoke them. The Data API modes (API key or web OAuth client) keep working for people without a TV client. See [deployment notes](docs/deployment.md#youtube-sign-in-on-this-screen-innertube) for limits and caveats.
+By default TesPlay signs in with the OAuth client of YouTube's own TV app, which it reads from `youtube.com/tv`, the same way `youtubei.js` and similar sites do. If you prefer your own client, create one of type **TVs and Limited Input devices** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with the YouTube Data API v3 enabled, and either set `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET` in `.env` or paste it into the connection. Refresh tokens are stored encrypted with the connection and refreshed server-side. Choose **Sign out of Google** in the same editor to revoke them. The Data API modes (API key or web OAuth client) keep working as before. See [deployment notes](docs/deployment.md#youtube-sign-in-on-this-screen-innertube) for limits and caveats.
 
 </details>
 
