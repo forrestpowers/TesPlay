@@ -220,11 +220,12 @@ export async function createApp(options = {}) {
   };
   app.use(['/api/plex/:connectionId/servers','/api/plex/:connectionId/server','/api/plex/:connectionId/profiles','/api/plex/:connectionId/profile'],requireManagedConnection);
   app.use(['/api/drive/auth','/api/drive/callback','/api/youtube/auth','/api/youtube/callback'],requireConnectionManager);
+  app.use(['/api/youtube/:connectionId/signin','/api/youtube/:connectionId/signout'],requireConnectionManager);
   app.post('/api/connections/:id/test',requireConnectionManager,requireManagedConnection,(req,res,next)=>next());
   app.get('/api/connections/:id/categories',requireConnectionManager,requireManagedConnection,(req,res,next)=>next());
   app.post('/api/connections/categories/preview',requireConnectionManager,(req,res,next)=>next());
   app.use(['/api/radio','/api/youtube/resolve'],requireConnectionManager);
-  app.get('/api/connection-capabilities',(req,res)=>res.json({googleConfigured:Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),canUseLocal:req.user.role==='owner'}));
+  app.get('/api/connection-capabilities',(req,res)=>res.json({googleConfigured:Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),googleTvConfigured:Boolean(process.env.GOOGLE_TV_CLIENT_ID && process.env.GOOGLE_TV_CLIENT_SECRET),canUseLocal:req.user.role==='owner'}));
   function settings(req) {
     return {
       serverName: process.env.SERVER_NAME || "TesPlay",

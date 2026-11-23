@@ -154,12 +154,12 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
       );
       authorization = {
         authMode:
-          config.authMode === "apiKey" || config.authMode === "oauth"
+          ["apiKey", "oauth", "innertube"].includes(config.authMode)
             ? config.authMode
             : config.refreshToken
               ? "oauth"
               : "apiKey",
-        oauthAuthorized: Boolean(config.refreshToken),
+        oauthAuthorized: Boolean(config.authMode === "innertube" ? config.tvRefreshToken : config.refreshToken),
       };
     }
     return {

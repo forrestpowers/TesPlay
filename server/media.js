@@ -507,6 +507,8 @@ export function createMediaService(ctx) {
       const currentHeaders = item.getHeaders
         ? await item.getHeaders(req, connection)
         : item.headers;
+      if (item.chunkBytes && item.kind !== "hls")
+        return chunkedProxy(req, res, item, currentHeaders, controller);
       const headers = {
         ...currentHeaders,
         // Rewritten manifests have different byte positions from the provider's
@@ -685,6 +687,75 @@ export function createMediaService(ctx) {
       if (item?.kind === "artwork" && error.status === 502 && !controller.signal.aborted && !res.headersSent)
         return unavailableArtwork(res);
       next(error);
+    }
+  }
+  /**
+   * Serve one client range as a sequence of bounded upstream range requests.
+   * YouTube's videoplayback hosts refuse open-ended or multi-megabyte ranges,
+   * while the engine's UrlSource asks for "bytes=N-"; the proxy bridges the two.
+   */
+  async function chunkedProxy(req, res, item, headers, controller) {
+    const chunkBytes = Math.max(64 * 1024, Number(item.chunkBytes));
+    const requested = /^bytes=(\d+)-(\d*)$/.exec(String(req.headers.range || "bytes=0-"));
+    if (!requested) return res.status(416).set("Content-Range", `bytes */${item.size || "*"}`).end();
+    const start = Number(requested[1]);
+    const requestedEnd = requested[2] === "" ? undefined : Number(requested[2]);
+    let total = item.size;
+    let position = start;
+    let written = false;
+    const fetchChunk = async (from, to) => requestRemote(item.url, {
+      headers: { ...headers, Range: `bytes=${from}-${to}` }, allowedPrivateHosts: item.allowedPrivateHosts,
+      timeout: 45000, signal: controller.signal,
+    });
+    while (!controller.signal.aborted) {
+      if (total !== undefined && start >= total) return res.status(416).set("Content-Range", `bytes */${total}`).end();
+      const last = Math.min(position + chunkBytes - 1, ...[requestedEnd, total === undefined ? undefined : total - 1].filter(n => n !== undefined));
+      let upstream;
+      try {
+        upstream = await fetchChunk(position, last);
+      } catch (error) {
+        if (controller.signal.aborted) { if (!res.headersSent) res.destroy(); return; }
+        throw error;
+      }
+      const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(upstream.headers["content-range"] || ""));
+      if (upstream.statusCode !== 206 || !match) {
+        upstream.resume();
+        if (written) { res.destroy(); return; }
+        if (upstream.statusCode === 416) return res.status(416).set("Content-Range", `bytes */${total || "*"}`).end();
+        return res.status(502).json({ error: `Media provider returned HTTP ${upstream.statusCode}.` });
+      }
+      total = Number(match[3]);
+      item.size = total;
+      const chunkEnd = Number(match[2]);
+      if (!written) {
+        const end = Math.min(requestedEnd ?? total - 1, total - 1);
+        const contentType = String(upstream.headers["content-type"] || "application/octet-stream");
+        if (!/^(?:video\/|audio\/|application\/(?:octet-stream|mp4)(?:;|$))/i.test(contentType)) {
+          upstream.destroy();
+          throw providerError("The provider returned an unsupported media response.", 502);
+        }
+        res.setHeader('X-Csp-Representation-Id', 'mr1_' + createHash('sha256').update(`tesplay-proxy-v1\0${req.params.token}\0${item.url}\0${total}\0${upstream.headers.etag || ''}\0${upstream.headers['last-modified'] || ''}`).digest('base64url'));
+        res.status(206).set({ "Content-Type": contentType, "Accept-Ranges": "bytes", "Content-Range": `bytes ${start}-${end}/${total}`, "Content-Length": String(end - start + 1) });
+        if (req.method === "HEAD") { upstream.destroy(); return res.end(); }
+        written = true;
+      }
+      const onAbort = () => upstream.destroy();
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        for await (const chunk of upstream) {
+          if (!res.write(chunk)) await new Promise(resolve => res.once("drain", resolve));
+          if (res.destroyed) { upstream.destroy(); return; }
+        }
+      } catch (error) {
+        // The engine cancels range reads routinely once it has what it needs.
+        if (controller.signal.aborted || res.destroyed) return;
+        res.destroy(error);
+        return;
+      } finally {
+        controller.signal.removeEventListener("abort", onAbort);
+      }
+      position = chunkEnd + 1;
+      if (position > Math.min(requestedEnd ?? total - 1, total - 1)) return res.end();
     }
   }
   function releaseHandler(req, res, next) {

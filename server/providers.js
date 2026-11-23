@@ -2,6 +2,7 @@ import { plainText, mediaDate } from "./text.js";
 import { registerStremioRoutes } from './stremio.js';
 import { createYouTubeResolver } from "./youtube.js";
 import { registerYouTubeBrowser } from "./youtube-browser.js";
+import { createInnertubeService, registerInnertubeRoutes } from "./youtube-innertube.js";
 import { registerPlexLibrary } from "./plex-library.js";
 import { createProviderCache } from "./provider-cache.js";
 import { categoryLoaded } from './iptv-selection.js';
@@ -190,6 +191,10 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       config: { ...current.config, ...config },
     }, { allowShared: true });
   };
+  // InnerTube (signed-in TV client) browsing and stream resolution; pass innertube: null to disable.
+  const innertube = dependencies.innertube === undefined
+    ? createInnertubeService({ getConnection: (req, id) => ctx.getConnection(req, id), saveConfig })
+    : dependencies.innertube;
   const art = (req, c, url, headers = {}) => {
     if (!url) return undefined;
     try {
@@ -530,6 +535,8 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
   }
 
   registerPlexLibrary(app,{ctx,connection,request:plexRequest,token:plexToken,item:plexItem,route,art});
+  const youtubeSignInLimit = rateLimit({ windowMs: 60000, limit: 6, keyGenerator: (req) => req.user.id, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many Google sign-in attempts. Try again in a minute." } });
+  if (innertube) registerInnertubeRoutes(app, { connection, route, art, service: innertube, limiter: youtubeSignInLimit });
   registerYouTubeBrowser(app, { connection, request: youtubeRequest, route, art, cached, cacheKey,
     library: (req) => ctx.libraryState ? ctx.libraryState(req) : { progress: [] },
     stars: (req) => ctx.stars ? ctx.stars(req) : [],
@@ -542,9 +549,13 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
   async function youtubePlayback(req, videoId, c = null) {
     const controller = new AbortController();
     req.res.once("close", () => { if (!req.res.writableEnded) controller.abort(); });
-    const resolved = await resolveYouTube(videoId, controller.signal);
+    // InnerTube first (signed-in TV client, then anonymous iOS); yt-dlp remains the fallback and the live path.
+    let resolved = innertube ? await innertube.resolve(req, c, videoId, controller.signal).catch(error => { if (error?.status === 400) throw error; return null; }) : null;
+    if (!resolved?.video) resolved = await resolveYouTube(videoId, controller.signal);
     const register = (resource) => media.register(req, c, {
       url: resource.url, headers: resource.headers, kind: resource.hls ? "hls" : "video",
+      // googlevideo refuses open-ended and multi-megabyte ranges; the proxy re-chunks them.
+      ...(resolved.via && !resource.hls ? { chunkBytes: 4 * 1024 * 1024 } : {}),
     });
     return {
       url: register(resolved.video),
@@ -553,6 +564,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       isLive: resolved.isLive,
       streamKind: resolved.audio ? "dual-input" : "direct-file",
       provider: "youtube",
+      ...(resolved.via ? { via: resolved.via } : {}),
     };
   }
   const youtubeLimit = rateLimit({ windowMs: 60000, limit: 10, keyGenerator: (req) => req.user.id, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many YouTube requests. Try again in a minute." } });
@@ -587,6 +599,8 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
         const dir = await containedPath(c.config.rootPath);
         if (!(await stat(dir)).isDirectory())
           throw providerError("Choose a folder, not a file.");
+      } else if (c.type === "youtube" && innertube?.mode(c)) {
+        await innertube.test(req, c);
       } else if (c.type === "youtube") {
         await youtubeRequest(req, c, "videos", {
           part: "id",

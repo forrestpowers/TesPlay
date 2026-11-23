@@ -1,4 +1,4 @@
-export type YouTubeAuthMode = 'apiKey' | 'oauth';
+export type YouTubeAuthMode = 'apiKey' | 'oauth' | 'innertube';
 
 const fields: Record<
   string,
@@ -80,13 +80,19 @@ const fields: Record<
     },
   ],
 };
+const youtubeTvFields = [
+  { key: 'tvClientId', label: 'Google TV OAuth client ID', placeholder: 'Client ID of a "TVs and Limited Input devices" client', optional: true },
+  { key: 'tvClientSecret', label: 'Google TV OAuth client secret', placeholder: 'Its client secret', secret: true, optional: true },
+];
 export function connectionFields(type: string, mode: YouTubeAuthMode) {
+  if (type === 'youtube' && mode === 'innertube') return youtubeTvFields;
   return type === 'youtube' && mode === 'oauth'
     ? fields.drive.filter(field => field.key !== 'folderId')
     : fields[type] || [];
 }
 
 export function youtubeAuthMode(config: Record<string, string>, configuredFields: string[]): YouTubeAuthMode {
+  if (config.authMode === 'innertube') return 'innertube';
   return config.authMode === 'oauth' || (!config.authMode && (configuredFields.includes('refreshToken') || configuredFields.includes('accessToken')))
     ? 'oauth' : 'apiKey';
 }

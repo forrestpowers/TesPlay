@@ -100,7 +100,8 @@ async function fixture(t, options = {}) {
       return { id, type: saved.type, name: saved.name };
     },
   };
-  registerProviderRoutes(app, ctx, { remoteData: options.remoteData, resolveYouTube: options.resolveYouTube });
+  // InnerTube is disabled unless a test injects a fake, so no test reaches YouTube.
+  registerProviderRoutes(app, ctx, { remoteData: options.remoteData, resolveYouTube: options.resolveYouTube, innertube: options.innertube ?? null });
   app.use((err, _req, res, _next) =>
     res.status(err.status || 500).json({ error: err.message }),
   );
@@ -1458,4 +1459,40 @@ test('owned local files expose the same representation across ranges and change 
   const first=await f.request(playback.url,{headers:{Range:'bytes=0-3'}});await first.arrayBuffer();const second=await f.request(playback.url,{headers:{Range:'bytes=4-7'}});await second.arrayBuffer();
   const identity=first.headers.get('x-csp-representation-id');assert.match(identity,/^mr1_[A-Za-z0-9_-]{43}$/);assert.equal(second.headers.get('x-csp-representation-id'),identity);
   await writeFile(file,Buffer.from('changed file content'));const changed=await f.request(playback.url);await changed.arrayBuffer();assert.notEqual(changed.headers.get('x-csp-representation-id'),identity);
+});
+
+test("YouTube playback resolves through InnerTube first and keeps yt-dlp as the fallback", async (t) => {
+  const calls = [];
+  const innertube = {
+    mode: (c) => c.config.authMode === 'innertube',
+    test: async () => true,
+    resolve: async (_req, c, id) => {
+      calls.push(['innertube', c?.id, id]);
+      if (id === 'abcdefghijk') return { via: 'innertube-tv', isLive: false, video: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=137&sig=private', headers: {} }, audio: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=140&sig=private', headers: {} } };
+      if (id === 'liveliveliv') return { isLive: true };
+      return null;
+    },
+  };
+  const f = await fixture(t, {
+    innertube,
+    resolveYouTube: async (id) => {
+      calls.push(['yt-dlp', id]);
+      return { video: { url: 'https://test.googlevideo.com/live.m3u8', headers: {}, hls: true }, audio: null, isLive: id === 'liveliveliv' };
+    },
+  });
+  const id = f.add('youtube', { authMode: 'innertube', tvRefreshToken: 'rt' });
+  const direct = await (await f.request(`/api/playback?connectionId=${id}&itemId=abcdefghijk`)).json();
+  assert.equal(direct.streamKind, 'dual-input');
+  assert.equal(direct.via, 'innertube-tv');
+  assert.match(direct.url, /^\/api\/media\//);
+  assert.match(direct.audioUrl, /^\/api\/media\//);
+  assert.ok(!JSON.stringify(direct).includes('private'));
+  const live = await (await f.request(`/api/playback?connectionId=${id}&itemId=liveliveliv`)).json();
+  assert.equal(live.type, 'hls');
+  assert.equal(live.isLive, true);
+  assert.equal(live.streamKind, 'direct-file');
+  const fallback = await (await f.request(`/api/playback?connectionId=${id}&itemId=zzzzzzzzzzz`)).json();
+  assert.equal(fallback.type, 'hls');
+  assert.deepEqual(calls, [['innertube', id, 'abcdefghijk'], ['innertube', id, 'liveliveliv'], ['yt-dlp', 'liveliveliv'], ['innertube', id, 'zzzzzzzzzzz'], ['yt-dlp', 'zzzzzzzzzzz']]);
+  assert.equal((await f.request(`/api/connections/${id}/test`, { method: 'POST' })).status, 200);
 });

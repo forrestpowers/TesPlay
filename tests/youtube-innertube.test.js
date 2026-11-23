@@ -1,0 +1,257 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import express from 'express';
+import {
+  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, relativeDate, clockDuration, TV_SCOPES, SIGN_IN_REQUIRED,
+} from '../server/youtube-innertube.js';
+
+const NOW = Date.parse('2026-11-23T12:00:00Z');
+const run = v => ({ toString: () => v, runs: [{ text: v }] });
+const lockup = (id, title, parts = [], { type = 'VIDEO', badge = '12:34', image = 'https://i.ytimg.com/vi/x/hq720.jpg' } = {}) => ({
+  type: 'LockupView', content_id: id, content_type: type,
+  metadata: { title: run(title), metadata: { metadata_rows: [{ metadata_parts: parts.map(p => ({ text: typeof p === 'string' ? run(p) : p })) }] } },
+  content_image: { image: [{ url: image, width: 720 }, { url: image.replace('hq720', 'mq'), width: 320 }], overlays: [{ badges: [{ text: badge }] }] },
+  duration: { text: badge, seconds: clockDuration(badge) || 0 },
+});
+const format = (itag, mime, extra = {}) => ({ itag, mime_type: mime, has_video: mime.startsWith('video'), has_audio: mime.startsWith('audio'), url: `https://rr1---sn-test.googlevideo.com/videoplayback?itag=${itag}`, bitrate: 1000 * itag, ...extra, decipher: async () => `https://rr1---sn-test.googlevideo.com/videoplayback?itag=${itag}&n=ok` });
+const streaming = (heights = [1080, 720, 2160]) => ({ adaptive_formats: [
+  ...heights.map(h => format(h === 2160 ? 313 : h === 1080 ? 137 : 136, h === 2160 ? 'video/webm; codecs="vp9"' : 'video/mp4; codecs="avc1.640028"', { height: h, fps: 30 })),
+  format(140, 'audio/mp4; codecs="mp4a.40.2"'), format(251, 'audio/webm; codecs="opus"'), format(139, 'audio/mp4; codecs="mp4a.40.5"', { bitrate: 48000 }),
+] });
+
+test('item mappers read youtubei.js nodes into MediaItem shapes and reject malformed ids', () => {
+  const classic = videoItem({ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run('Big Buck Bunny'), author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' }, thumbnails: [{ url: '//i.ytimg.com/vi/aqz-KE-bpKQ/hq720.jpg', width: 720 }], duration: { seconds: 635 }, published: run('13 days ago'), is_live: false, description_snippet: run('An <b>open</b> movie') }, { connectionId: 'c1' }, NOW);
+  assert.deepEqual(classic, { id: 'aqz-KE-bpKQ', connectionId: 'c1', source: 'YouTube', providerType: 'youtube', type: 'video', title: 'Big Buck Bunny', description: 'An open movie', poster: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hq720.jpg', subtitle: 'Blender', categoryLabel: 'Blender', channelId: 'UCSMOQeBJ2RAnuFungnQOxLg', duration: 635, publishedAt: '2026-11-10T12:00:00.000Z' });
+  const channelPage = videoItem(lockup('pvUy69I_Xuk', "What's New", ['322K views', '2 weeks ago'], { badge: '28:01' }), { connectionId: 'c1', channel: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', title: 'Blender' } }, NOW);
+  assert.equal(channelPage.subtitle, 'Blender'); assert.equal(channelPage.channelId, 'UCSMOQeBJ2RAnuFungnQOxLg'); assert.equal(channelPage.duration, 1681); assert.equal(channelPage.publishedAt, '2026-11-09T12:00:00.000Z');
+  assert.equal(channelPage.poster, 'https://i.ytimg.com/vi/x/hq720.jpg');
+  const author = { ...run('Blender'), runs: [{ text: 'Blender', endpoint: { payload: { browseId: 'UCSMOQeBJ2RAnuFungnQOxLg' } } }] };
+  const playlistVideo = videoItem(lockup('MF1qEhBSfq4', 'First Steps', [author, '4.4M views']), {}, NOW);
+  assert.equal(playlistVideo.subtitle, 'Blender'); assert.equal(playlistVideo.channelId, 'UCSMOQeBJ2RAnuFungnQOxLg'); assert.equal(playlistVideo.duration, 754);
+  assert.equal(videoItem(lockup('MF1qEhBSfq4', 'Clip', [], { type: 'SHORT' }), {}, NOW).contentKind, 'short');
+  assert.equal(videoItem({ type: 'ShortsLockupView', on_tap_endpoint: { payload: { videoId: 'MF1qEhBSfq4' } }, overlay_metadata: { primary_text: run('A short') } }, {}, NOW).contentKind, 'short');
+  assert.equal(videoItem({ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('Live now'), is_live: true }, {}, NOW).contentKind, 'live');
+  assert.equal(videoItem({ type: 'Video', video_id: 'short', title: run('bad') }, {}, NOW), null);
+  assert.equal(videoItem({ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('[Private video]') }, {}, NOW), null);
+  assert.equal(videoItem(lockup('MF1qEhBSfq4', 'Not a video', [], { type: 'PLAYLIST' }), {}, NOW), null);
+  assert.equal(videoItem({ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('http thumb'), thumbnails: [{ url: 'http://evil.example/x.jpg', width: 9 }] }, {}, NOW).poster, 'https://i.ytimg.com/vi/MF1qEhBSfq4/hqdefault.jpg');
+  const channel = channelItem({ type: 'Channel', author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender', thumbnails: [{ url: '//yt3.ggpht.com/a', width: 88 }] }, subscriber_count: run('1.2M subscribers'), video_count: run('1,234 videos') });
+  assert.deepEqual(channel, { id: 'UCSMOQeBJ2RAnuFungnQOxLg', title: 'Blender', description: '', thumbnail: 'https://yt3.ggpht.com/a', videoCount: 1234, subtitle: '1,234 videos' });
+  assert.equal(channelItem({ type: 'Channel', author: { id: 'not-a-channel', name: 'x' } }), null);
+  const playlist = playlistItem({ ...lockup('PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6', 'Fundamentals', [], { type: 'PLAYLIST', badge: '43 videos' }) });
+  assert.equal(playlist.id, 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6'); assert.equal(playlist.videoCount, 43); assert.equal(playlist.title, 'Fundamentals');
+  assert.equal(playlistItem({ type: 'GridPlaylist', id: 'aqz-KE-bpKQ', title: run('looks like a video id') }), null);
+  assert.equal(relativeDate('Streamed 3 hours ago', NOW), '2026-11-23T09:00:00.000Z');
+  assert.equal(relativeDate('in 2 hours', NOW), undefined);
+  assert.equal(clockDuration('1:02:03'), 3723); assert.equal(clockDuration('LIVE'), undefined);
+});
+
+test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 140 and refuses DRM or SABR-only data', () => {
+  const chosen = chooseStreams(streaming());
+  assert.equal(chosen.video.itag, 137); assert.equal(chosen.video.height, 1080); assert.equal(chosen.audio.itag, 140);
+  assert.equal(chooseStreams(streaming(), { maxHeight: 720 }).video.itag, 136);
+  const sabr = streaming(); sabr.adaptive_formats.forEach(f => { delete f.url; });
+  assert.equal(chooseStreams(sabr), null);
+  const drm = streaming(); drm.adaptive_formats.forEach(f => { f.drm_families = ['widevine']; });
+  assert.equal(chooseStreams(drm), null);
+  const noAac = streaming(); noAac.adaptive_formats = noAac.adaptive_formats.filter(f => !/mp4a/.test(f.mime_type));
+  assert.equal(chooseStreams(noAac), null);
+});
+
+function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'] } = {}) {
+  const connections = new Map([['c1', { id: 'c1', type: 'youtube', name: 'YouTube', config: { authMode: 'innertube', tvClientId: 'tv-client', tvClientSecret: 'tv-secret', ...config } }]]);
+  const saved = [];
+  const fetchCalls = [];
+  const fetchImpl = async (url, init) => {
+    fetchCalls.push({ url: String(url), body: Object.fromEntries(new URLSearchParams(init?.body || '')) });
+    const next = fetchResponses.shift() || { status: 500, body: { error: 'unexpected' } };
+    return { ok: next.status < 300, status: next.status, json: async () => next.body };
+  };
+  const created = [];
+  const feedOf = (videos, more) => ({ videos, channels: [], playlists: [], has_continuation: !!more, getContinuation: async () => feedOf(more, null) });
+  const createInnertube = async (options = {}) => {
+    const events = {};
+    const yt = { options,
+      session: { on: (name, fn) => { events[name] = fn; }, signIn: async tokens => { yt.session.oauth.oauth2_tokens = tokens; yt.session.logged_in = true; }, oauth: { oauth2_tokens: null, setTokens(t) { this.oauth2_tokens = t; } }, player: { id: 'p' }, logged_in: false },
+      calls: [], events,
+      getBasicInfo: async (id, options) => { yt.calls.push(['getBasicInfo', id, options.client]); return info(options.client, yt); },
+      getHomeFeed: async () => feedOf([{ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run('Home one'), author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' } }], [{ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('Home two') }]),
+      getSubscriptionsFeed: async () => feedOf([{ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('New upload'), published: run('1 day ago') }]),
+      getHistory: async () => feedOf([{ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run('Watched') }]),
+      getChannelsFeed: async () => ({ ...feedOf([]), channels: [{ type: 'Channel', author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' } }] }),
+      getPlaylists: async () => ({ ...feedOf([]), playlists: [{ type: 'GridPlaylist', id: 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6', title: run('Fundamentals'), video_count: run('43 videos') }] }),
+      search: async (q, filters) => filters?.type === 'video' ? feedOf([{ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run(`Result for ${q}`) }]) : { ...feedOf([]), channels: [{ type: 'Channel', author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' } }] },
+      getChannel: async id => ({ has_videos: true, metadata: { title: 'Blender' }, getVideos: async () => feedOf([lockup('pvUy69I_Xuk', 'Channel upload', ['1K views', '2 days ago'])]) }),
+      getPlaylist: async id => ({ items: [lockup('MF1qEhBSfq4', 'Lesson 1')], has_continuation: false }),
+    };
+    created.push(yt);
+    return yt;
+  };
+  const service = createInnertubeService({
+    getConnection: (_req, id) => connections.get(id), saveConfig: (_req, c, patch) => { saved.push(patch); const current = connections.get(c.id); current.config = { ...current.config, ...patch }; },
+    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n',
+  });
+  return { service, connections, saved, fetchCalls, created, req: { user: { id: 'owner' } } };
+}
+
+test('device sign-in: start requests a code with the TV scopes, status polls Google and saves encrypted-config tokens once approved', async () => {
+  const f = fixture({ config: { tvRefreshToken: undefined }, fetchResponses: [
+    { status: 400, body: { error: 'invalid_scope' } },
+    { status: 200, body: { device_code: 'dev', user_code: 'ABCD-EFGH', verification_url: 'https://www.google.com/device', expires_in: 1800, interval: 5 } },
+    { status: 428, body: { error: 'authorization_pending' } },
+    { status: 200, body: { access_token: 'at', refresh_token: 'rt', expires_in: 3600 } },
+  ] });
+  const c = f.connections.get('c1');
+  const start = await f.service.startSignIn(f.req, c);
+  assert.deepEqual(start, { status: 'pending', userCode: 'ABCD-EFGH', verificationUrl: 'https://www.google.com/device', expiresAt: new Date(NOW + 1800000).toISOString(), interval: 5 });
+  assert.deepEqual(f.fetchCalls.map(x => x.body.scope), TV_SCOPES);
+  assert.equal((await f.service.signInStatus(f.req, c)).status, 'pending');
+  assert.equal(f.fetchCalls.length, 3);
+  assert.equal(f.fetchCalls[2].body.grant_type, 'urn:ietf:params:oauth:grant-type:device_code');
+  // Polling again inside Google's interval does not hit Google.
+  assert.equal((await f.service.signInStatus(f.req, c)).status, 'pending');
+  assert.equal(f.fetchCalls.length, 3);
+  f.service._internal.pending.get('c1').nextPoll = 0;
+  assert.deepEqual(await f.service.signInStatus(f.req, c), { status: 'authorized' });
+  assert.deepEqual(f.saved.at(-1), { authMode: 'innertube', tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000, tvScope: TV_SCOPES[1] });
+  assert.ok(f.service.signedIn(f.connections.get('c1')));
+  // Another user cannot read the owner's pending code.
+  assert.equal((await f.service.signInStatus({ user: { id: 'other' } }, c)).status, 'authorized');
+});
+
+test('device sign-in reports denied and expired codes and rejects an unknown client', async () => {
+  const f = fixture({ fetchResponses: [
+    { status: 200, body: { device_code: 'dev', user_code: 'X', verification_url: 'https://www.google.com/device', expires_in: 1800, interval: 5 } },
+    { status: 403, body: { error: 'access_denied' } },
+    { status: 401, body: { error: 'invalid_client' } },
+  ] });
+  const c = f.connections.get('c1');
+  await f.service.startSignIn(f.req, c);
+  assert.deepEqual(await f.service.signInStatus(f.req, c), { status: 'denied' });
+  await assert.rejects(f.service.startSignIn(f.req, c), { status: 409 });
+  await assert.rejects(f.service.startSignIn(f.req, { ...c, shared: true }), { status: 403 });
+  await assert.rejects(f.service.startSignIn(f.req, { ...c, config: { authMode: 'innertube' } }), /client ID and secret/);
+});
+
+test('browsing uses one signed-in client per connection, refreshes expired tokens through Google and pages through continuations', async () => {
+  const f = fixture({ config: { tvAccessToken: 'stale', tvRefreshToken: 'rt', tvExpiresAt: NOW - 1 }, fetchResponses: [{ status: 200, body: { access_token: 'fresh', expires_in: 3600 } }] });
+  const c = f.connections.get('c1');
+  const home = await f.service.home(f.req, c);
+  assert.deepEqual(home.items.map(i => i.id), ['aqz-KE-bpKQ']);
+  assert.equal(home.items[0].subtitle, 'Blender');
+  assert.ok(home.nextPageToken);
+  assert.equal(f.fetchCalls[0].body.grant_type, 'refresh_token');
+  assert.deepEqual(f.saved[0], { tvAccessToken: 'fresh', tvExpiresAt: NOW + 3600000 });
+  assert.equal(f.created.length, 1);
+  assert.equal(f.created[0].session.oauth.oauth2_tokens.access_token, 'fresh');
+  assert.deepEqual(f.created[0].session.oauth.oauth2_tokens.client, { client_id: 'tv-client', client_secret: 'tv-secret' });
+  const page2 = await f.service.home(f.req, c, home.nextPageToken);
+  assert.deepEqual(page2.items.map(i => i.id), ['MF1qEhBSfq4']);
+  assert.equal(page2.nextPageToken, null);
+  await assert.rejects(f.service.home(f.req, c, home.nextPageToken), { status: 410 });
+  await assert.rejects(f.service.home({ user: { id: 'other' } }, c, 'nope'), { status: 410 });
+  assert.equal((await f.service.subscriptionsFeed(f.req, c)).items[0].publishedAt, '2026-11-22T12:00:00.000Z');
+  assert.equal((await f.service.history(f.req, c)).items[0].title, 'Watched');
+  assert.deepEqual((await f.service.channels(f.req, c)).channels.map(x => x.title), ['Blender']);
+  assert.deepEqual((await f.service.playlists(f.req, c)).playlists[0], { id: 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6', title: 'Fundamentals', thumbnail: undefined, videoCount: 43 });
+  const search = await f.service.search(f.req, c, '  blender ');
+  assert.equal(search.items[0].title, 'Result for blender'); assert.equal(search.channels.length, 1);
+  assert.deepEqual(await f.service.search(f.req, c, ''), { items: [], channels: [], nextPageToken: null });
+  const channel = await f.service.channelVideos(f.req, c, 'UCSMOQeBJ2RAnuFungnQOxLg');
+  assert.equal(channel.items[0].subtitle, 'Blender'); assert.equal(channel.items[0].channelId, 'UCSMOQeBJ2RAnuFungnQOxLg');
+  await assert.rejects(f.service.channelVideos(f.req, c, 'bad'), { status: 400 });
+  assert.equal((await f.service.playlistVideos(f.req, c, 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6')).items[0].title, 'Lesson 1');
+  assert.equal(f.created.length, 1);
+  assert.equal(f.fetchCalls.length, 1);
+});
+
+test('browsing without a completed sign-in asks for it, and a revoked refresh token asks to reconnect', async () => {
+  const none = fixture();
+  await assert.rejects(none.service.home(none.req, none.connections.get('c1')), { status: 409, message: SIGN_IN_REQUIRED });
+  const revoked = fixture({ config: { tvRefreshToken: 'rt', tvExpiresAt: 0 }, fetchResponses: [{ status: 400, body: { error: 'invalid_grant' } }] });
+  await assert.rejects(revoked.service.home(revoked.req, revoked.connections.get('c1')), error => error.status === 409 && /sign in on this screen again/.test(error.message));
+  assert.equal(revoked.created.length, 0);
+});
+
+test('stream resolution prefers the signed-in TV client, falls back to anonymous visionOS with page visitor data, defers live videos and gives up on SABR-only data', async () => {
+  const statuses = { TV: 'OK', VISIONOS: 'OK' };
+  const infoFor = (client) => ({ playability_status: { status: statuses[client], reason: statuses[client] === 'OK' ? '' : 'Sign in to confirm you’re not a bot' }, basic_info: { title: 'Big Buck Bunny', is_live: false }, streaming_data: statuses[client] === 'OK' ? streaming() : undefined });
+  const f = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: infoFor });
+  const c = f.connections.get('c1');
+  const resolved = await f.service.resolve(f.req, c, 'aqz-KE-bpKQ');
+  assert.equal(resolved.via, 'innertube-tv');
+  assert.equal(resolved.video.url, 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=137&n=ok');
+  assert.equal(resolved.audio.url, 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=140&n=ok');
+  assert.equal(resolved.isLive, false);
+  assert.deepEqual(f.created[0].calls, [['getBasicInfo', 'aqz-KE-bpKQ', 'TV']]);
+  statuses.TV = 'LOGIN_REQUIRED';
+  const anonymous = await f.service.resolve(f.req, c, 'aqz-KE-bpKQ');
+  assert.equal(anonymous.via, 'innertube-visionos');
+  assert.equal(f.created.length, 2, 'anonymous client is separate from the signed-in one');
+  assert.equal(f.created[1].session.logged_in, false);
+  assert.equal(f.created[1].options.visitor_data, 'visitor-1', 'anonymous client carries visitor data from a page view');
+  // Connections without InnerTube sign-in skip the TV attempt entirely and reuse the anonymous client.
+  const anon = await f.service.resolve(f.req, { id: 'c2', type: 'youtube', config: { apiKey: 'k' } }, 'aqz-KE-bpKQ');
+  assert.equal(anon.via, 'innertube-visionos');
+  assert.equal(f.created.length, 2);
+  // A bot check on stale visitor data mints fresh visitor data once and retries.
+  statuses.VISIONOS = 'LOGIN_REQUIRED';
+  const seen = [];
+  const f2 = fixture({ config: { tvRefreshToken: undefined }, info: (_client, yt) => { seen.push(yt.options.visitor_data); return yt.options.visitor_data === 'visitor-2' ? { playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming() } : { playability_status: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm you’re not a bot' }, basic_info: {} }; } });
+  const retried = await f2.service.resolve(f2.req, f2.connections.get('c1'), 'aqz-KE-bpKQ');
+  assert.equal(retried.via, 'innertube-visionos');
+  assert.deepEqual(seen, ['visitor-1', 'visitor-2']);
+  statuses.VISIONOS = 'UNPLAYABLE';
+  assert.equal(await f.service.resolve(f.req, c, 'aqz-KE-bpKQ'), null);
+  await assert.rejects(f.service.resolve(f.req, c, 'nope'), { status: 400 });
+  const live = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: { is_live: true }, streaming_data: streaming() }) });
+  assert.deepEqual((await live.service.resolve(live.req, live.connections.get('c1'), 'aqz-KE-bpKQ')).isLive, true);
+  const sabr = fixture({ info: () => { const data = streaming(); data.adaptive_formats.forEach(x => { delete x.url; }); return { playability_status: { status: 'OK' }, basic_info: {}, streaming_data: data }; } });
+  assert.equal(await sabr.service.resolve(sabr.req, sabr.connections.get('c1'), 'aqz-KE-bpKQ'), null);
+  const limited = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming() }), probe: async () => false });
+  assert.equal(await limited.service.resolve(limited.req, limited.connections.get('c1'), 'aqz-KE-bpKQ'), null, 'URLs that refuse mid-file ranges are not handed to the player');
+  const foreign = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: { adaptive_formats: [ { ...format(137, 'video/mp4; codecs="avc1"', { height: 720 }), decipher: async () => 'https://evil.example/video' }, format(140, 'audio/mp4; codecs="mp4a"') ] } }) });
+  assert.equal(await foreign.service.resolve(foreign.req, foreign.connections.get('c1'), 'aqz-KE-bpKQ'), null);
+});
+
+async function routesFixture(mode) {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => { req.user = { id: 'owner' }; next(); });
+  const connections = new Map([['c1', { id: 'c1', type: 'youtube', name: 'YouTube', config: { authMode: mode } }]]);
+  const service = {
+    mode: c => c.config.authMode === 'innertube', signedIn: () => true,
+    startSignIn: async () => ({ status: 'pending', userCode: 'CODE' }), signInStatus: async () => ({ status: 'pending' }), cancelSignIn: () => {}, signOut: async () => {},
+    home: async (_req, c, token) => ({ items: [{ id: 'aqz-KE-bpKQ', title: token ? 'page 2' : 'page 1', poster: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hq720.jpg' }], nextPageToken: token ? null : 'tok' }),
+    search: async (_req, _c, q) => ({ items: [], channels: [{ id: 'UCSMOQeBJ2RAnuFungnQOxLg', title: q, thumbnail: 'https://yt3.ggpht.com/a' }], nextPageToken: null }),
+    history: async () => ({ items: [] }), subscriptionsFeed: async () => ({ items: [] }), channels: async () => ({ channels: [] }), playlists: async () => ({ playlists: [] }),
+    channelVideos: async () => ({ items: [] }), playlistVideos: async () => ({ items: [] }),
+  };
+  const route = fn => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
+  registerInnertubeRoutes(app, { connection: (_req, id) => { const c = connections.get(id); if (!c) throw Object.assign(new Error('missing'), { status: 404 }); return c; }, route, art: (_req, _c, url) => url ? `/api/media/a_${Buffer.from(url).toString('base64url')}` : undefined, service });
+  app.get('/api/youtube/:connectionId/home', (_req, res) => res.status(409).json({ error: 'data api fallthrough' }));
+  app.get('/api/youtube/:connectionId/search', (_req, res) => res.json({ dataApi: true }));
+  app.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }));
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  return { request: (path, init) => fetch(base + path, init), close: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }) };
+}
+
+test('routes serve InnerTube connections with proxied artwork and fall through to the Data API handlers otherwise', async t => {
+  const inner = await routesFixture('innertube'); t.after(inner.close);
+  const home = await (await inner.request('/api/youtube/c1/home')).json();
+  assert.equal(home.items[0].title, 'page 1'); assert.ok(home.items[0].poster.startsWith('/api/media/a_')); assert.equal(home.nextPageToken, 'tok');
+  assert.equal((await (await inner.request('/api/youtube/c1/home?pageToken=tok')).json()).items[0].title, 'page 2');
+  assert.equal((await inner.request('/api/youtube/c1/home?pageToken=not%20valid!')).status, 400);
+  const search = await (await inner.request('/api/youtube/c1/search?q=blender')).json();
+  assert.equal(search.channels[0].title, 'blender'); assert.ok(search.channels[0].thumbnail.startsWith('/api/media/a_'));
+  assert.deepEqual(await (await inner.request('/api/youtube/c1/signin/start', { method: 'POST' })).json(), { status: 'pending', userCode: 'CODE' });
+  assert.equal((await inner.request('/api/youtube/c1/feed')).status, 200);
+  assert.equal((await inner.request('/api/youtube/missing/home')).status, 404);
+  const data = await routesFixture('apiKey'); t.after(data.close);
+  assert.equal((await data.request('/api/youtube/c1/home')).status, 409);
+  assert.deepEqual(await (await data.request('/api/youtube/c1/search?q=x')).json(), { dataApi: true });
+  assert.equal((await data.request('/api/youtube/c1/signin/start', { method: 'POST' })).status, 404);
+});

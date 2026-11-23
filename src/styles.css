@@ -2697,3 +2697,8 @@ form {
 @media(max-width:600px) {
   .library-sidebar[aria-label='Plex libraries'] .sidebar-category { flex-shrink:0; }
 }
+
+.youtube-device-signin .pair-code { letter-spacing:0.18em; }
+.youtube-device-signin .youtube-device-done { display:flex; align-items:center; gap:10px; color:#8fe0a5; }
+.youtube-device-signin .form-help .spin { vertical-align:-2px; margin-right:6px; }
+.youtube-signin-mode { margin-bottom:14px; }

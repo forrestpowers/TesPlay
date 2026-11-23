@@ -48,7 +48,7 @@ export default function Connections({
   const [configuredFields, setConfiguredFields] = useState<string[]>([]);
   const [phoneSetup, setPhoneSetup] = useState(false);
   const [publicUrl, setPublicUrl] = useState(location.origin);
-  const [capabilities,setCapabilities]=useState({googleConfigured:false,canUseLocal:false});
+  const [capabilities,setCapabilities]=useState({googleConfigured:false,googleTvConfigured:false,canUseLocal:false});
   useEffect(() => {
     if (preview) return;
     let dead = false;
@@ -125,6 +125,13 @@ export default function Connections({
         editing ? "PUT" : "POST",
       );
       await onRefresh();
+      if (adding === 'youtube' && youtubeMode === 'innertube' && !editing) {
+        // Keep the editor open on the saved connection so the Google sign-in code can be requested next.
+        const saved = await api<{ connection: Connection; config: Record<string, string>; configuredFields: string[] }>(`/connections/${r.connection.id}/config`);
+        setEditing(saved.connection); setEditConfig(saved.config); setConfiguredFields(saved.configuredFields);
+        setNotice(`${r.connection.name} saved. Now sign in with Google on this screen.`);
+        return;
+      }
       setNotice(
         newIptv ? `${r.connection.name} saved with your chosen categories.` : `${r.connection.name} saved. Test the connection to check access.`,
       );
@@ -245,7 +252,8 @@ export default function Connections({
       {adding === "stremio" && <Suspense fallback={<Busy label="Opening Stremio…"/>}><StremioConnectionDialog connection={editing} preview={preview} onClose={close} onSignIn={onSignIn} onChanged={onRefresh}/></Suspense>}
       {adding && adding !== "stremio" && <ConnectionEditor key={`${editing?.id || 'new'}:${adding}`} adding={adding} editing={editing} editConfig={editConfig} configuredFields={configuredFields}
         preview={preview} busy={busy} error={error} notice={notice} publicUrl={publicUrl} plexPin={plexPin}
-        managedGoogle={capabilities.googleConfigured||!capabilities.canUseLocal} googleConfigured={capabilities.googleConfigured} startGoogle={startGoogle}
+        managedGoogle={capabilities.googleConfigured||!capabilities.canUseLocal} googleConfigured={capabilities.googleConfigured} googleTvConfigured={capabilities.googleTvConfigured} startGoogle={startGoogle}
+        onRefresh={async () => { await onRefresh(); if (editing) { const saved = await api<{ connection: Connection }>(`/connections/${editing.id}/config`).catch(() => null); if (saved) setEditing(saved.connection); } }}
         onClose={close} onSignIn={onSignIn} onPhoneSetup={() => setPhoneSetup(true)} onTypeChange={setAdding}
         onSubmit={submit} startPlex={startPlex} checkPlex={checkPlex}/>}
       {servers && plexConnection && <PlexServerDialog servers={servers} busy={busy} error={error} onClose={() => setServers(null)}

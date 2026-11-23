@@ -7,6 +7,7 @@ import { api, errorMessage } from './api';
 import IptvCategoryPicker from './IptvCategoryPicker';
 import type { IptvCategory, IptvSelection } from './IptvCategoryPicker';
 import QrCode from './QrCode';
+import YouTubeDeviceSignIn from './YouTubeDeviceSignIn';
 import { connectionFields as fieldsFor, youtubeAuthMode } from './connection-fields';
 import type { YouTubeAuthMode } from './connection-fields';
 import type { Connection } from './types';
@@ -14,7 +15,7 @@ import type { PlexPin } from './plex-connection';
 
 export type ConnectionFormOptions = { playlist: string; youtubeMode: YouTubeAuthMode; loadedCategories?:IptvSelection };
 
-export default function ConnectionEditor({ adding, editing, editConfig, configuredFields, preview, busy, error, notice, publicUrl, plexPin, managedGoogle=false,googleConfigured=false,startGoogle,
+export default function ConnectionEditor({ adding, editing, editConfig, configuredFields, preview, busy, error, notice, publicUrl, plexPin, managedGoogle=false,googleConfigured=false,googleTvConfigured=false,startGoogle,onRefresh,
   onClose: close, onSignIn, onPhoneSetup, onTypeChange, onSubmit, startPlex, checkPlex }: {
   adding: string;
   editing: Connection | null;
@@ -28,7 +29,9 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
   plexPin: PlexPin | null;
   managedGoogle?:boolean;
   googleConfigured?:boolean;
+  googleTvConfigured?:boolean;
   startGoogle?:()=>Promise<void>;
+  onRefresh?:()=>Promise<void>;
   onClose: () => void;
   onSignIn: () => void;
   onPhoneSetup: () => void;
@@ -41,6 +44,8 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
   const [showPlexAdvanced,setShowPlexAdvanced]=useState(false);
   const [youtubeMode, setYoutubeMode] = useState<YouTubeAuthMode>(() => editing ? youtubeAuthMode(editConfig, configuredFields) : 'apiKey');
   const connectionFields = fieldsFor(adding, youtubeMode);
+  const youtubeDevice = adding === 'youtube' && youtubeMode === 'innertube';
+  const tvClientReady = googleTvConfigured || (configuredFields.includes('tvClientId') && configuredFields.includes('tvClientSecret'));
   const newIptv = !editing && ['xtream', 'm3u'].includes(adding);
   const formRef = useRef<HTMLFormElement>(null), categoryRequest = useRef<AbortController | null>(null);
   const [categories, setCategories] = useState<IptvCategory[]>([]), [selection, setSelection] = useState<IptvSelection>([]);
@@ -169,8 +174,22 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
               {!showPlexAdvanced&&notice&&<p className="form-help" role="status">{notice}</p>}
             </div>
           )}
-          {managedGoogle&&['drive','youtube'].includes(adding)&&<div className="plex-signin"><p>{adding==='drive'?'Connect your Google account to browse your videos.':'Connect your Google account for subscriptions and playlists.'}</p><button className="button primary full" disabled={busy||!googleConfigured} onClick={()=>void startGoogle?.()}>Sign in with Google <ArrowUpRight size={17}/></button>{!googleConfigured&&<p className="form-help">Google sign-in is not configured on this server yet.</p>}{error&&<p className="form-error" role="alert">{error}</p>}</div>}
-          {!managedGoogle&&adding === "youtube" && (
+          {adding === 'youtube' && (
+            <div className="segmented connection-mode youtube-signin-mode">
+              <button type="button" className={youtubeMode === 'innertube' ? 'selected' : ''} onClick={() => setYoutubeMode('innertube')}>Sign in on this screen</button>
+              <button type="button" className={youtubeMode !== 'innertube' ? 'selected' : ''} onClick={() => setYoutubeMode(managedGoogle ? 'oauth' : 'apiKey')}>Data API</button>
+            </div>
+          )}
+          {youtubeDevice && (
+            <p className="form-help">
+              Browses YouTube the way the YouTube TV app does: your real Home feed, subscriptions, playlists and watch history, with no Data API quota.
+              {googleTvConfigured ? ' This server already has a Google TV OAuth client, so you can sign in right away.' : ' In Google Cloud, create an OAuth client of type “TVs and Limited Input devices” with the YouTube Data API v3 enabled, then save its ID and secret here.'}
+              {!editing && ' Save first; the sign-in code appears next.'}
+            </p>
+          )}
+          {youtubeDevice && editing && <YouTubeDeviceSignIn connectionId={editing.id} signedIn={!!editing.oauthAuthorized && editing.authMode === 'innertube'} clientReady={tvClientReady} onChanged={async () => { await onRefresh?.(); }} />}
+          {managedGoogle&&adding==='youtube'&&youtubeMode==='innertube'?null:managedGoogle&&['drive','youtube'].includes(adding)&&<div className="plex-signin"><p>{adding==='drive'?'Connect your Google account to browse your videos.':'Connect your Google account for subscriptions and playlists.'}</p><button className="button primary full" disabled={busy||!googleConfigured} onClick={()=>void startGoogle?.()}>Sign in with Google <ArrowUpRight size={17}/></button>{!googleConfigured&&<p className="form-help">Google sign-in is not configured on this server yet.</p>}{error&&<p className="form-error" role="alert">{error}</p>}</div>}
+          {!managedGoogle&&adding === "youtube" && youtubeMode !== 'innertube' && (
             <div className="segmented connection-mode">
               <button
                 type="button"
@@ -221,7 +240,7 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
               keep its current value.
             </p>
           )}
-          {!(managedGoogle&&['drive','youtube'].includes(adding))&&!(adding==='plex'&&!editing&&!showPlexAdvanced)&&<form ref={formRef} onSubmit={submitForm} key={`${editing?.id || "new"}:${adding}`} onChange={event => {
+          {!(managedGoogle&&['drive','youtube'].includes(adding)&&!youtubeDevice)&&!(adding==='plex'&&!editing&&!showPlexAdvanced)&&<form ref={formRef} onSubmit={submitForm} key={`${editing?.id || "new"}:${adding}`} onChange={event => {
             if (newIptv && event.target instanceof HTMLInputElement && event.target.name && event.target.name !== 'name') invalidateCategories();
           }}>
             <div className="connection-details-fields" hidden={categoryStep}>
@@ -243,7 +262,7 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
                   type={f.secret ? "password" : "text"}
                   defaultValue={editConfig[f.key] || ""}
                   required={
-                    !f.optional && !configuredFields.includes(f.key) && !(adding==='m3u' && f.key==='url' && playlist.trim())
+                    !f.optional && !configuredFields.includes(f.key) && !(adding==='m3u' && f.key==='url' && playlist.trim()) || (youtubeDevice && !googleTvConfigured && !configuredFields.includes(f.key))
                   }
                   placeholder={
                     configuredFields.includes(f.key) && !editConfig[f.key]

@@ -12,6 +12,7 @@ const supportedConnections = [
 ];
 const editablePublicConfigFields = new Set([
   "clientId",
+  "tvClientId",
   "folderId",
   "rootPath",
   "output",
@@ -151,6 +152,21 @@ export function registerConnectionRoutes(app, { store, ctx, requireOwner }) {
       safeUpdate.accessToken = null;
       safeUpdate.refreshToken = null;
       safeUpdate.expiresAt = 0;
+    }
+    if (
+      existing.type === "youtube" &&
+      safeUpdate &&
+      typeof safeUpdate === "object" &&
+      ["tvClientId", "tvClientSecret"].some(
+        (field) =>
+          Object.hasOwn(safeUpdate, field) &&
+          safeUpdate[field] !== existing.config[field],
+      )
+    ) {
+      // Device-flow tokens belong to the TV OAuth client that issued them.
+      safeUpdate.tvAccessToken = null;
+      safeUpdate.tvRefreshToken = null;
+      safeUpdate.tvExpiresAt = 0;
     }
     res.json({
       connection: ctx.saveConnection(req, {
