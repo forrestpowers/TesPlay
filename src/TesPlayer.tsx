@@ -12,6 +12,7 @@ import type { PlayerEngine, PlayerSnapshot, PlayerCommand, PlayerSubtitleCue } f
 import type { MediaItem, Playback, PlayerPreferences } from './types';
 import { defaultPlayerPreferences, preferredSubtitleTrack } from './player-preferences';
 import { createTesPlayAdapter, TesPlaySourceError } from './tesplayer-adapter';
+import { registerAacMainRelabelDecoder } from './aac-main-decoder';
 import {startPlexPlaybackHeartbeat} from './plex-playback-heartbeat';
 
 const time = (seconds: number) => {
@@ -58,6 +59,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const hideTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),feedbackTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),lastTap=useRef<{time:number;side:string}>({time:0,side:''}),lastTouchSeek=useRef(0);
   const reveal=()=>{setControlsVisible(true);clearTimeout(hideTimer.current);hideTimer.current=setTimeout(()=>setControlsVisible(false),2500);};
   useEffect(()=>{const changed=()=>setFullscreen(document.fullscreenElement===surface.current);document.addEventListener('fullscreenchange',changed);return()=>{document.removeEventListener('fullscreenchange',changed);clearTimeout(hideTimer.current);clearTimeout(feedbackTimer.current);};},[]);
+  useEffect(()=>{registerAacMainRelabelDecoder();},[]);
   useEffect(()=>{if(snapshot?.phase==='playing')reveal();},[snapshot?.phase]);
   const toggleFullscreen=()=>{
     if(remoteOnly)return;
@@ -93,7 +95,8 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     const unavailable = reason instanceof Error && reason.message === 'Canvas playback is unavailable.';
     if (typed?.code === 'STALE_OPERATION' || (reason instanceof DOMException && reason.name === 'AbortError')) return;
     // Engine errors are already sanitized. Avoid showing raw fetch URLs or credentials.
-    const text = reason instanceof TesPlaySourceError ? reason.message : unavailable ? 'This browser does not support TesPlayer canvas playback. Use an updated browser with WebCodecs enabled.' : typed?.code ? `Playback could not continue (${typed.code}). ${playback.provider === 'plex' ? 'Try again or choose Plex compatibility for this title.' : 'Reopen this title or try another stream.'}` : 'This source could not play. Check its connection and browser codec support, then try again.';
+    console.warn('[TesPlayer] playback error', typed?.code ?? '', reason instanceof Error ? reason.message : reason, (reason as { safeCause?: string })?.safeCause ?? '');
+    const text = reason instanceof TesPlaySourceError ? reason.message : unavailable ? 'This browser does not support TesPlayer canvas playback. Use an updated browser with WebCodecs enabled.' : typed?.code ? `Playback could not continue (${typed.code}${reason instanceof Error && reason.message ? `: ${reason.message}` : ''}). ${playback.provider === 'plex' ? 'Try again or choose Plex compatibility for this title.' : 'Reopen this title or try another stream.'}` : 'This source could not play. Check its connection and browser codec support, then try again.';
     if(playback.provider==='plex' && ['DEMUX_FAILED','NETWORK_TIMEOUT','RECOVERY_EXHAUSTED','DECODE_FAILED'].includes(typed?.code||'') && retries.current<2){
       if(retryPending.current)return;retryPending.current=true;retries.current++;
       progress.current(lastPosition.current,lastDuration.current);setBusy(true);setMessage('Reconnecting to your stream');

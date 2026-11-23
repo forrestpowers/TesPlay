@@ -1535,10 +1535,21 @@ export class CanvasPlayerEngine implements PlayerEngine {
         'BAD_REQUEST',
         'Exact audio track selector is required for audio selection',
       );
-    const primary = videoTrack
+    let primary = videoTrack
       ? await videoTrack.getPrimaryPairableAudioTrack()
       : await input.getPrimaryAudioTrack();
     this.ensureCurrent(operation);
+    // TesPlay patch: live MPEG-TS from IPTV providers often lists an AC-3 track
+    // first and an AAC track second. An endpoint selector (the host's generic
+    // "default audio" entry) does not pin a demuxed track, so prefer the first
+    // pairable track this browser can decode over the primary one.
+    if (primary && tracks.length > 1) {
+      const decodable = await this.firstDecodableAudioTrack(
+        [primary, ...tracks.filter((track) => track !== primary)],
+        operation,
+      );
+      if (decodable) primary = decodable;
+    }
     const audioTracks = session.tracks.filter((track) => track.kind === 'audio');
     const onlyId = audioTracks.at(0)?.id ?? null;
     return {
@@ -1546,6 +1557,26 @@ export class CanvasPlayerEngine implements PlayerEngine {
       id:
         desired?.id ?? (tracks.length === 1 && audioTracks.length === 1 ? onlyId : null),
     };
+  }
+
+  private async firstDecodableAudioTrack(
+    candidates: readonly InputAudioTrack[],
+    operation: Operation,
+  ): Promise<InputAudioTrack | null> {
+    for (const track of candidates) {
+      let config: AudioDecoderConfig | null;
+      try {
+        config = await track.getDecoderConfig();
+      } catch {
+        config = null;
+      }
+      this.ensureCurrent(operation);
+      if (!config) continue;
+      const capability = await probeTrackDecoderCapability(config, 'audio');
+      this.ensureCurrent(operation);
+      if (capability.supported) return track;
+    }
+    return null;
   }
 
   private async inspectTracks(

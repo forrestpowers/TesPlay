@@ -59,7 +59,28 @@ function serializableConfig(
   return record;
 }
 
+// TesPlay patch: some broadcast MPEG-TS streams flag AAC-LC/HE-AAC audio as
+// AAC Main (mp4a.40.1) in their ADTS headers. Browsers reject that codec string
+// but decode the frames as AAC-LC, which TesPlay's registered Mediabunny custom
+// decoder relabels. Probe the relabelled configuration before giving up.
+const AAC_MAIN_CODEC = 'mp4a.40.1';
+const AAC_LC_CODEC = 'mp4a.40.2';
+
 export async function probeTrackDecoderCapability(
+  config: VideoDecoderConfig | AudioDecoderConfig,
+  kind: 'video' | 'audio',
+): Promise<ClientCodecCapability> {
+  const result = await probeExactDecoderCapability(config, kind);
+  if (result.supported || kind !== 'audio' || config.codec !== AAC_MAIN_CODEC)
+    return result;
+  const relabelled = await probeExactDecoderCapability(
+    { ...(config as AudioDecoderConfig), codec: AAC_LC_CODEC },
+    kind,
+  );
+  return relabelled.supported ? { ...relabelled, codec: config.codec } : result;
+}
+
+async function probeExactDecoderCapability(
   config: VideoDecoderConfig | AudioDecoderConfig,
   kind: 'video' | 'audio',
 ): Promise<ClientCodecCapability> {
