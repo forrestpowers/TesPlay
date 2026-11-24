@@ -507,6 +507,7 @@ export function createMediaService(ctx) {
       const currentHeaders = item.getHeaders
         ? await item.getHeaders(req, connection)
         : item.headers;
+      if (item.spool) return spoolProxy(req, res, item, controller);
       if (item.chunkBytes && item.kind !== "hls")
         return chunkedProxy(req, res, item, currentHeaders, controller);
       const headers = {
@@ -687,6 +688,24 @@ export function createMediaService(ctx) {
       if (item?.kind === "artwork" && error.status === 502 && !controller.signal.aborted && !res.headersSent)
         return unavailableArtwork(res);
       next(error);
+    }
+  }
+  /** Stream a track that is still being written on the server (a YouTube SABR spool). */
+  async function spoolProxy(req, res, item, controller) {
+    const spool = item.spool;
+    item.touch?.();
+    if (spool.error && !spool.size) return res.status(502).json({ error: "YouTube stopped the adaptive stream before it started." });
+    res.status(200).set({ "Content-Type": item.contentType || "video/mp4", "Accept-Ranges": "none", "Cache-Control": "private, no-store" });
+    if (req.method === "HEAD") return res.end();
+    try {
+      for await (const chunk of spool.read(controller.signal)) {
+        if (!res.write(chunk)) await new Promise(resolve => res.once("drain", resolve));
+        if (res.destroyed) return;
+      }
+      res.end();
+    } catch (error) {
+      if (controller.signal.aborted || res.destroyed) return;
+      res.destroy(error);
     }
   }
   /**

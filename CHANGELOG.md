@@ -3,6 +3,7 @@
 ## Unreleased
 
 - YouTube **Sign in on this screen**: Google's TV device-code flow (enter a short code at google.com/device on your phone) signs the server in to YouTube's InnerTube API through `youtubei.js`. The YouTube hub gains a real **Home** tab, newest uploads from all subscriptions, account watch history, quota-free search, channel and playlist browsing. Works out of the box with YouTube's own TV-app client; your own Google OAuth client of type “TVs and Limited Input devices” is optional (per connection or `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET`).
+- Signed-in YouTube playback through SABR (YouTube's server-side adaptive streaming, via `googlevideo`): the server spools H.264 and AAC tracks to `DATA_DIR/youtube-cache` and TesPlayer reads them as growing fragmented MP4, so playback works from addresses YouTube refuses anonymously. `YOUTUBE_SABR=auto|prefer|off`.
 - Optional `pot` Compose profile with a proof-of-origin token provider (`YOUTUBE_POT_PROVIDER_URL`) for servers on datacenter addresses; the InnerTube path and the yt-dlp resolver both use it.
 - YouTube playback resolves streams through InnerTube first (signed-in TV client, then an anonymous visionOS client with page visitor data): best H.264 track at or below 1080p plus AAC audio, re-chunked into bounded byte ranges by the media proxy. yt-dlp remains the fallback and the live-stream path.
 

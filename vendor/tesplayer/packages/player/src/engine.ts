@@ -1306,7 +1306,12 @@ export class CanvasPlayerEngine implements PlayerEngine {
     try {
       if (
         session.streamKind === 'dual-input' ||
-        (endpointFor(session, 'audio') && endpointFor(session, 'manifest'))
+        (endpointFor(session, 'audio') && endpointFor(session, 'manifest')) ||
+        // TesPlay patch: a growing fragmented-MP4 video track with a separate growing audio
+        // track (YouTube SABR spooled by the server) is a dual input read sequentially.
+        (session.streamKind === 'growing-fmp4' &&
+          endpointFor(session, 'audio') &&
+          endpointFor(session, 'video'))
       ) {
         const videoEndpoint =
           endpointFor(session, 'video') ?? endpointFor(session, 'manifest');

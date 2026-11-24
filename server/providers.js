@@ -3,6 +3,7 @@ import { registerStremioRoutes } from './stremio.js';
 import { createYouTubeResolver } from "./youtube.js";
 import { registerYouTubeBrowser } from "./youtube-browser.js";
 import { createInnertubeService, registerInnertubeRoutes } from "./youtube-innertube.js";
+import { createSabrBridge } from "./youtube-sabr.js";
 import { registerPlexLibrary } from "./plex-library.js";
 import { createProviderCache } from "./provider-cache.js";
 import { categoryLoaded } from './iptv-selection.js';
@@ -193,7 +194,8 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
   };
   // InnerTube (signed-in TV client) browsing and stream resolution; pass innertube: null to disable.
   const innertube = dependencies.innertube === undefined
-    ? createInnertubeService({ getConnection: (req, id) => ctx.getConnection(req, id), saveConfig })
+    ? createInnertubeService({ getConnection: (req, id) => ctx.getConnection(req, id), saveConfig,
+      sabr: createSabrBridge({ cacheDir: path.resolve(ctx.dataDir || process.env.DATA_DIR || "data", "youtube-cache") }) })
     : dependencies.innertube;
   const art = (req, c, url, headers = {}) => {
     if (!url) return undefined;
@@ -552,17 +554,20 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     // InnerTube first (signed-in TV client, then anonymous iOS); yt-dlp remains the fallback and the live path.
     let resolved = innertube ? await innertube.resolve(req, c, videoId, controller.signal).catch(error => { if (error?.status === 400) throw error; return null; }) : null;
     if (!resolved?.video) resolved = await resolveYouTube(videoId, controller.signal);
-    const register = (resource) => media.register(req, c, {
-      url: resource.url, headers: resource.headers, kind: resource.hls ? "hls" : "video",
-      // googlevideo refuses open-ended and multi-megabyte ranges; the proxy re-chunks them.
-      ...(resolved.via && !resource.hls ? { chunkBytes: 4 * 1024 * 1024 } : {}),
-    });
+    const register = (resource) => media.register(req, c, resource.spool
+      // A SABR track spooled on the server: served sequentially as it downloads.
+      ? { kind: "video", spool: resource.spool, contentType: "video/mp4" }
+      : {
+        url: resource.url, headers: resource.headers, kind: resource.hls ? "hls" : "video",
+        // googlevideo refuses open-ended and multi-megabyte ranges; the proxy re-chunks them.
+        ...(resolved.via && !resource.hls ? { chunkBytes: 4 * 1024 * 1024 } : {}),
+      });
     return {
       url: register(resolved.video),
       ...(resolved.audio ? { audioUrl: register(resolved.audio) } : {}),
       type: resolved.video.hls ? "hls" : "video",
       isLive: resolved.isLive,
-      streamKind: resolved.audio ? "dual-input" : "direct-file",
+      streamKind: resolved.video.spool ? "growing-fmp4" : resolved.audio ? "dual-input" : "direct-file",
       provider: "youtube",
       ...(resolved.via ? { via: resolved.via } : {}),
     };

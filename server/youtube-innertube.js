@@ -7,6 +7,7 @@
 // falls back to yt-dlp when neither yields plain videoplayback URLs.
 import { createHash, randomBytes } from 'node:crypto';
 import https from 'node:https';
+import vm from 'node:vm';
 import { providerError, validateRemoteUrl } from './media.js';
 import { plainText } from './text.js';
 
@@ -201,6 +202,7 @@ export function createInnertubeService({
   createInnertube, cacheFactory, maxHeight = 1080, pageLifetime = 15 * 60000, requestTimeout = 25000,
   probe = defaultProbe, visitorData = fetchVisitorData, visitorLifetime = 6 * 3600000,
   potProviderUrl = env.YOUTUBE_POT_PROVIDER_URL || '', potLifetime = 5 * 3600000,
+  sabr = null, sabrMode = env.YOUTUBE_SABR || 'auto',
 } = {}) {
   const pending = new Map(); // connectionId -> device authorization in progress
   const clients = new Map(); // connectionId -> { key, promise }
@@ -239,7 +241,12 @@ export function createInnertubeService({
     return { ok: response.ok && !data.error, data };
   };
   async function youtubei() {
-    library ??= import('youtubei.js');
+    library ??= import('youtubei.js').then(module => {
+      // youtubei.js leaves running YouTube's obfuscated player script (signature and n-parameter
+      // transforms) to the host. Run it in a bare V8 context with no access to Node APIs.
+      module.Platform.shim.eval = (data, env) => vm.runInNewContext(`(function () {\n${data.output}\n})()`, { ...env }, { timeout: 5000 });
+      return module;
+    });
     return library;
   }
   async function build(options = {}) {
@@ -476,9 +483,46 @@ export function createInnertubeService({
     await tvPage(req, c, { browseId: 'FEwhat_to_watch' }, 'items');
     return true;
   }
+  /**
+   * The signed-in TV client only offers server-side adaptive streaming (SABR). Spool the chosen
+   * H.264 and AAC tracks to disk through the googlevideo client and hand the player two growing
+   * fragmented-MP4 files. One session per video is shared by every reader.
+   */
+  async function startSabr(req, c, videoId, yt, info) {
+    const session = await sabr.open(`${c.id}:${videoId}:${maxHeight}`, async (session) => {
+      const [{ SabrStream }, { buildSabrFormat, EnabledTrackTypes }, { Constants }] = await Promise.all([import('googlevideo/sabr-stream'), import('googlevideo/utils'), youtubei()]);
+      const streamingData = info.streaming_data;
+      const config = info.player_config?.media_common_config?.media_ustreamer_request_config?.video_playback_ustreamer_config;
+      if (!streamingData?.server_abr_streaming_url || !config) throw providerError('YouTube did not provide an adaptive streaming session for this video.', 502);
+      const serverAbrStreamingUrl = await yt.session.player.decipher(streamingData.server_abr_streaming_url);
+      const clientName = parseInt(Constants.CLIENT_NAME_IDS[yt.session.context.client.clientName]) || 7;
+      const clientVersion = yt.session.context.client.clientVersion;
+      const reload = async () => {
+        const fresh = await timed(yt.getBasicInfo(videoId, { client: 'TV' }));
+        return { serverAbrStreamingUrl: await yt.session.player.decipher(fresh.streaming_data.server_abr_streaming_url), videoPlaybackUstreamerConfig: fresh.player_config.media_common_config.media_ustreamer_request_config.video_playback_ustreamer_config };
+      };
+      const pot = await poToken(yt.session.context.client.visitorData).catch(() => undefined);
+      const stream = new SabrStream({
+        videoId, serverAbrStreamingUrl, videoPlaybackUstreamerConfig: config, formats: streamingData.adaptive_formats.map(buildSabrFormat),
+        clientInfo: { clientName, clientVersion }, ...(pot ? { poToken: pot } : {}), callbacks: { onReloadPlayerResponse: reload },
+      });
+      stream.on('error', error => { log.warn?.(`YouTube SABR ${videoId}: ${error.message}`); void session.video.fail(error); void session.audio.fail(error); });
+      stream.on('streamProtectionStatusUpdate', status => { if (status?.status && status.status !== 1) log.warn?.(`YouTube SABR ${videoId}: stream protection status ${status.status} (a proof-of-origin token may be required).`); });
+      session.abortStream = () => stream.abort();
+      const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || '') && (f.height || 0) <= maxHeight).sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const aac = formats => formats.find(f => f.itag === 140) || formats.filter(f => /mp4a/i.test(f.mimeType || '') && (f.audioChannels || 2) <= 2).sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const { videoStream, audioStream, selectedFormats } = stream.start({ videoFormat: h264, audioFormat: aac, enabledTrackTypes: EnabledTrackTypes.VIDEO_AND_AUDIO, isPostLiveDvr: false });
+      if (!selectedFormats.videoFormat || !selectedFormats.audioFormat) { await stream.abort(); throw providerError('YouTube offered no H.264 and AAC tracks for adaptive streaming.', 422); }
+      const spool = (readable, target) => readable.pipeTo(new WritableStream({ write: chunk => target.write(chunk), close: () => target.finish(), abort: reason => target.fail(reason) })).catch(error => target.fail(error));
+      Promise.all([spool(videoStream, session.video), spool(audioStream, session.audio)]).then(() => { session.finished = true; }).catch(() => {});
+      return { video: selectedFormats.videoFormat, audio: selectedFormats.audioFormat };
+    });
+    return { sabr: session, video: { spool: session.video }, audio: { spool: session.audio }, isLive: false, via: 'innertube-sabr', title: text(info.basic_info?.title) };
+  }
   /** Direct H.264 + AAC stream URLs for TesPlayer's dual-input path, or null when InnerTube cannot supply them. */
   async function resolve(req, c, videoId, signal) {
     if (!VIDEO_ID.test(String(videoId))) throw providerError('Enter a valid YouTube video ID.', 400);
+    let sabrCandidate = null;
     const attempts = [];
     if (c && innertubeSignedIn(c)) attempts.push({ client: 'TV', open: () => signedClient(req, c) });
     // visionOS is the one anonymous client that still hands out plain URLs; with a proof-of-origin
@@ -500,7 +544,13 @@ export function createInnertubeService({
         if (info.basic_info?.is_live || info.basic_info?.is_upcoming) return { isLive: true, info: info.basic_info };
         if (status && status !== 'OK') { lastReason = `${attempt.client}: ${status} ${info.playability_status?.reason || ''}`.trim(); continue; }
         const chosen = chooseStreams(info.streaming_data, { maxHeight });
-        if (!chosen) { lastReason = `${attempt.client}: no progressive H.264/AAC formats (SABR only)`; continue; }
+        if (!chosen) {
+          if (attempt.client === 'TV' && sabr && sabrMode !== 'off' && info.streaming_data?.server_abr_streaming_url) {
+            sabrCandidate = { yt, info };
+            if (sabrMode === 'prefer') break;
+          }
+          lastReason = `${attempt.client}: no progressive H.264/AAC formats (SABR only)`; continue;
+        }
         const endpoint = async format => {
           const url = validateRemoteUrl(await format.decipher(yt.session.player));
           if (url.protocol !== 'https:' || !/(?:^|\.)googlevideo\.com$/.test(url.hostname)) throw new Error('unexpected stream host');
@@ -518,6 +568,10 @@ export function createInnertubeService({
         if (attempt.client !== 'TV') anonymous = null;
         lastReason = `${attempt.client}: ${String(error?.message || error).slice(0, 200)}`;
       }
+    }
+    if (sabrCandidate) {
+      try { return await startSabr(req, c, videoId, sabrCandidate.yt, sabrCandidate.info); }
+      catch (error) { if (signal?.aborted) throw signal.reason; lastReason = `SABR: ${String(error?.message || error).slice(0, 200)}`; }
     }
     log.warn?.(`YouTube InnerTube could not resolve ${videoId} (${lastReason}); falling back to yt-dlp.`);
     return null;
