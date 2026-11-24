@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowRight, ArrowUpRight, Check, ChevronLeft, LoaderCircle, RefreshCw, Smartphone } from 'lucide-react';
-import { services } from './catalog';
+import { allServices as services } from './catalog';
 import { Busy, Modal } from './components';
 import { api, errorMessage } from './api';
 import IptvCategoryPicker from './IptvCategoryPicker';

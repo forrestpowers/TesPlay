@@ -20,22 +20,12 @@ export default function ConnectionServices({ preview, onSignIn, onAdd, canUseLoc
               {s.id === "youtube" ? <YouTubeLogo/> : s.letters}
             </div>
             <span className="type-label">
-              {s.id === "crunchyroll"
-                ? "Unavailable in player"
-                : s.id === "local"
-                  ? "On your server"
-                  : "Personal connection"}
+              {s.id === "local" ? "On your server" : "Personal connection"}
             </span>
           </div>
           <h2>{s.name}</h2>
           <p>{s.description}</p>
-          {s.id === "crunchyroll" ? (
-            <p className="form-help">
-              In-app playback is not available from this provider. No
-              connection can be added yet.
-            </p>
-          ) : (
-            <button
+          <button
               className="button ghost"
               onClick={() =>
                 preview
@@ -46,7 +36,6 @@ export default function ConnectionServices({ preview, onSignIn, onAdd, canUseLoc
               <Plus size={17} />
               Connect {s.name}
             </button>
-          )}
         </article>
       ))}
     </div>

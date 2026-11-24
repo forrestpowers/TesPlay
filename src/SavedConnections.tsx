@@ -1,5 +1,5 @@
 import { ArrowUpRight, ListFilter, Pencil, Server, Trash2, Users } from 'lucide-react';
-import { services } from './catalog';
+import { allServices } from './catalog';
 import { YouTubeLogo } from './components';
 import type { Connection } from './types';
 
@@ -19,7 +19,7 @@ export default function SavedConnections({ connections, busy, onTest, onEdit, on
         {connections.map((c) => (
           <div className="saved-connection" key={c.id}>
             <div className={`service-mark ${c.type}`}>
-              {c.type === "youtube" ? <YouTubeLogo/> : services.find((s) => s.id === c.type)?.letters || "TV"}
+              {c.type === "youtube" ? <YouTubeLogo/> : allServices.find((s) => s.id === c.type)?.letters || "TV"}
             </div>
             <div className="connection-title">
               <h3>{c.name}</h3>

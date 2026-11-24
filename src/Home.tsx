@@ -10,11 +10,11 @@ import type { Connection, Library, MediaItem } from './types';
 import { bundleIptvHomeShelves, homeFeatures, loadHomeConnection, mergeHomeResult, readHomePreview, writeHomePreview } from './home-library';
 import type { HomeCatalog, HomeResult, HomeShelf } from './home-library';
 import { filterLibraryForYouTubeVisibility, filterYouTubeShelves } from './youtube-visibility';
-export default function Home({ cacheIdentity, connections, library: rawLibrary, hideYouTubeShorts = false, signedIn, query, connectionsReady, connectionsError, onReloadConnections, canManage, onOpen, onFavorite, onDetails, onBrowse, onConnect, onNavigate, onUnavailable }: {
+export default function Home({ cacheIdentity, connections, library: rawLibrary, hideYouTubeShorts = false, signedIn, query, connectionsReady, connectionsError, onReloadConnections, canManage, onOpen, onFavorite, onDetails, onBrowse, onConnect, onNavigate }: {
   cacheIdentity:string; connections: Connection[]; library: Library; hideYouTubeShorts?: boolean; signedIn: boolean; query: string; connectionsReady: boolean; connectionsError: string; onReloadConnections: () => Promise<void>; canManage: boolean;
   onOpen: (item: MediaItem) => void; onFavorite: (item: MediaItem) => void; onDetails: (item: MediaItem) => void;
   onBrowse: (c: Connection, parent?: MediaItem, kind?: string, channel?: {id:string;title:string}, category?:string) => void; onConnect: (type?: string) => void;
-  onNavigate: (view: 'connections' | 'movies' | 'apps' | 'list') => void; onUnavailable: () => void;
+  onNavigate: (view: 'connections' | 'movies' | 'apps' | 'list') => void;
 }) {
   const library = useMemo(() => filterLibraryForYouTubeVisibility(rawLibrary, hideYouTubeShorts, connections), [rawLibrary, hideYouTubeShorts, connections]);
   const [results, setResults] = useState<Record<string, HomeResult>>({});
@@ -102,9 +102,9 @@ export default function Home({ cacheIdentity, connections, library: rawLibrary, 
           <div className="section-heading"><h2>Your libraries</h2><div className="row-actions">{connected && <RefreshButton label="Refresh home libraries" disabled={pending.length > 0} onRefresh={() => setRefresh(value => value + 1)} />}<button className="text-button" onClick={() => onNavigate('connections')}>{canManage ? 'Manage connections' : 'Shared connections'} <ArrowUpRight size={16} /></button></div></div>
           <div className="service-rail">{services.filter(s => canManage || connections.some(c => c.type === s.id || s.id === 'xtream' && c.type === 'm3u')).map(s => {
             const c = connections.find(c => c.type === s.id || (s.id === 'xtream' && c.type === 'm3u'));
-            return <button key={s.id} className={`service-tile service-${s.id}`} onClick={() => s.id === 'crunchyroll' ? onUnavailable() : s.id === 'youtube' ? onNavigate('apps') : c ? onBrowse(c) : onConnect(s.id)}>
+            return <button key={s.id} className={`service-tile service-${s.id}`} onClick={() => s.id === 'youtube' ? onNavigate('apps') : c ? onBrowse(c) : onConnect(s.id)}>
               <span className={`service-logo ${s.id}`} style={{ color: s.color }}>{s.id === 'youtube' ? <YouTubeLogo /> : s.letters}</span>
-              <span className="service-copy"><span className="service-label">{s.name}</span><span className="service-state">{s.id === 'crunchyroll' ? 'Unavailable' : c ? 'Connected' : s.id === 'youtube' ? 'Browse videos' : 'Connect'}</span></span>
+              <span className="service-copy"><span className="service-label">{s.name}</span><span className="service-state">{c ? 'Connected' : s.id === 'youtube' ? 'Browse videos' : 'Connect'}</span></span>
               {c ? <Check size={16} /> : <ArrowUpRight size={16} />}
             </button>;
           })}</div>
@@ -117,7 +117,7 @@ export default function Home({ cacheIdentity, connections, library: rawLibrary, 
         {connected && shelves.filter(s => s.items.length).map(shelf => <Row key={shelf.id} title={shelf.title} items={shelf.items} onOpen={onOpen} onFavorite={onFavorite} isSaved={i => favorites.has(itemKey(i))} progress={i => progress.get(itemKey(i))} more={() => viewAll(shelf)} />)}
         {library.favorites.length > 0 && <Row title="My list" items={library.favorites} onOpen={onOpen} onFavorite={onFavorite} isSaved={i => favorites.has(itemKey(i))} more={() => onNavigate('list')} />}
         <div className="discovery-row"><button onClick={() => onNavigate('apps')} className="discovery-card"><YouTubeLogo /><div><span className="small-caps">YouTube</span><h3>Your channels, on this screen</h3><p>Browse subscriptions or play a video link</p></div><ArrowUpRight size={20} /></button></div>
-        {canManage && !connections.length && <div className="connect-banner"><div><Cable size={24} /><div><h3>Add your first library</h3><p>Connect Plex, IPTV, Google Drive or Stremio</p></div></div><button className="button ghost" onClick={() => onNavigate('connections')}>Add a connection <Plus size={18} /></button></div>}
+        {canManage && !connections.length && <div className="connect-banner"><div><Cable size={24} /><div><h3>Add your first library</h3><p>Connect IPTV, YouTube, Google Drive or Stremio</p></div></div><button className="button ghost" onClick={() => onNavigate('connections')}>Add a connection <Plus size={18} /></button></div>}
       </div>
     </>}
   </>;

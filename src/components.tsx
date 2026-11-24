@@ -13,7 +13,7 @@ import {
   Radio,
   Info,
 } from "lucide-react";
-import { services } from "./catalog";
+import { allServices } from "./catalog";
 import { RefreshCw } from "lucide-react";
 import type { MediaItem } from "./types";
 export const MediaDetailsContext = createContext<{onDetails:(item:MediaItem)=>void;onPlay:(item:MediaItem)=>void}|null>(null);
@@ -33,7 +33,7 @@ export function YouTubeLogo({className = ""}: {className?: string}) {
   return <svg className={`youtube-logo ${className}`} viewBox="0 0 32 23" aria-hidden="true"><path fill="#ff4545" d="M31.3 3.6A4 4 0 0 0 28.5.8C26 0 16 0 16 0S6 0 3.5.8A4 4 0 0 0 .7 3.6C0 6.1 0 11.5 0 11.5s0 5.4.7 7.9a4 4 0 0 0 2.8 2.8C6 23 16 23 16 23s10 0 12.5-.8a4 4 0 0 0 2.8-2.8c.7-2.5.7-7.9.7-7.9s0-5.4-.7-7.9Z"/><path fill="white" d="m12.8 16.4 8.3-4.9-8.3-4.9Z"/></svg>;
 }
 export function ConnectorLogo({type}: {type:string}) {
-  const service = services.find(s => s.id === (type==='m3u'?'xtream':type));
+  const service = allServices.find(s => s.id === (type==='m3u'?'xtream':type));
   return <span className={`service-logo ${service?.id || type}`} style={{color:service?.color}}>{type==='youtube'?<YouTubeLogo/>:service?.letters || type.slice(0,1).toUpperCase()}</span>;
 }
 export function RefreshButton({onRefresh, disabled=false, label='Refresh content'}: {onRefresh:()=>void;disabled?:boolean;label?:string}) {

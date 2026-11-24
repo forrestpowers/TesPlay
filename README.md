@@ -50,7 +50,7 @@ Connect **Plex · Xtream Codes · M3U · Google Drive · Stremio addons · YouTu
 | YouTube | Home feed, subscriptions, watch history, search, channels, playlists and TesPlayer playback (720p30 by default) | Google TV OAuth client for “Sign in on this screen” (InnerTube), or a Data API key / web OAuth client; optional yt-dlp resolver as playback fallback |
 | Radio | Station search, favorites and audio playback | A reachable, compatible station stream |
 
-Service availability, codecs, provider quotas and simultaneous-stream limits still apply. Native Crunchyroll, Jellyfin/Emby adapters, DRM playback and general screen mirroring are not implemented. Existing server-folder connections remain supported, but Local/SMB is not offered as a new connection in the UI.
+Service availability, codecs, provider quotas and simultaneous-stream limits still apply. Native Crunchyroll, Jellyfin/Emby adapters, DRM playback and general screen mirroring are not implemented. Existing server-folder and Plex connections remain supported, but Local/SMB and Plex are not offered as new connections in the UI, and Crunchyroll is no longer listed.
 
 TesPlayer uses WebCodecs, canvas and Web Audio. Plex can provide compatibility transcoding. Recognized Tesla rear-screen browser/display combinations open a remote-first interface; support depends on vehicle firmware and browser capabilities.
 

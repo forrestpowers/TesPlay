@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 const StremioConnectionDialog = lazy(() => import("./StremioConnectionDialog"));
 import type { FormEvent } from "react";
-import { ArrowUpRight, Cable, Plus, Smartphone } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Cable, Plus, Smartphone } from 'lucide-react';
 import { api, errorMessage } from "./api";
 import { Busy } from "./components";
 import type { Connection } from "./types";
@@ -14,6 +14,7 @@ import type { PlexPin, PlexServer, PlexProfile } from './plex-connection';
 import PhoneSetupDialog from './PhoneSetupDialog';
 import RemoveConnectionDialog from './RemoveConnectionDialog';
 import IptvCategoryDialog from './IptvCategoryDialog';
+import YouTubeSignIn from './YouTubeSignIn';
 export default function Connections({
   connections,
   onRefresh,
@@ -43,6 +44,9 @@ export default function Connections({
     [servers, setServers] = useState<PlexServer[] | null>(null),
     [profiles, setProfiles] = useState<PlexProfile[] | null>(null);
   const [editing, setEditing] = useState<Connection | null>(null);
+  // A new YouTube connection starts on the phone sign-in page; the form is for the Data API or a custom client.
+  const [youtubeForm, setYoutubeForm] = useState(false);
+  const youtubeCreated = useRef<Connection | null>(null);
   const [categoryConnection, setCategoryConnection] = useState<Connection | null>(null);
   const [editConfig, setEditConfig] = useState<Record<string, string>>({});
   const [configuredFields, setConfiguredFields] = useState<string[]>([]);
@@ -64,6 +68,10 @@ export default function Connections({
   }, [preview]);
   const phoneLink = `${publicUrl}/?view=connections&phone=1`;
   function beginAdd(type: string) {
+    setYoutubeForm(false);
+    youtubeCreated.current = null;
+    // The YouTube sign-in replaces the whole page; start it at the top.
+    if (type === 'youtube') window.scrollTo({ top: 0 });
     setEditing(null);
     setEditConfig({});
     setConfiguredFields([]);
@@ -87,6 +95,8 @@ export default function Connections({
   }
   function close() {
     setAdding(null);
+    setYoutubeForm(false);
+    youtubeCreated.current = null;
     setEditing(null);
     setEditConfig({});
     setConfiguredFields([]);
@@ -190,6 +200,32 @@ export default function Connections({
       }
     });
   }
+  const createYouTube = useCallback(async () => {
+    const r = await api<{ connection: Connection }>('/connections', { type: 'youtube', name: 'YouTube', config: { authMode: 'innertube' } });
+    youtubeCreated.current = r.connection;
+    await onRefresh();
+    return r.connection;
+  }, [onRefresh]);
+  // A YouTube connection left half-way through sign-in is reused rather than duplicated.
+  const pendingYouTube = connections.find(c => c.type === 'youtube' && c.authMode === 'innertube' && !c.oauthAuthorized && !c.shared);
+  const youtubeSignedIn = useCallback(async () => {
+    const created = youtubeCreated.current || pendingYouTube;
+    await onRefresh();
+    close();
+    if (created) onBrowse(created);
+  }, [onRefresh, onBrowse, pendingYouTube]);
+  if (adding === 'youtube' && !editing && !youtubeForm && !preview) return (
+    <section className="page-section youtube-hub">
+      <button className="text-button youtube-signin-back" onClick={close}><ArrowLeft size={16} /> Back to connections</button>
+      <YouTubeSignIn connection={pendingYouTube} canManage onSignedIn={youtubeSignedIn} onCreateConnection={createYouTube} />
+      <p className="youtube-signin-alt">Prefer the YouTube Data API or your own Google OAuth client? <button className="text-button" onClick={() => {
+        // The sign-in page already saved a connection; edit that one instead of adding another.
+        const existing = youtubeCreated.current || pendingYouTube;
+        setYoutubeForm(true);
+        if (existing) void editConnection(existing);
+      }}>Use the connection form</button></p>
+    </section>
+  );
   return (
     <section className="page-section">
       {!embedded && <div className="page-heading">

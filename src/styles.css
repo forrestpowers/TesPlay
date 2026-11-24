@@ -2721,4 +2721,5 @@ form {
 .youtube-signin-qr-placeholder { color:#555; }
 .youtube-signin-code { font-family:"SF Mono","Menlo",monospace; font-size:40px; letter-spacing:0.18em; color:#f4f4f5; min-height:48px; }
 .youtube-signin-alt { color:#71717a; margin:0; }
+.youtube-signin-back { display:inline-flex; align-items:center; gap:6px; }
 @media (max-width:900px) { .youtube-signin { grid-template-columns:1fr; justify-items:center; text-align:center; } .youtube-signin-steps li { text-align:left; } }

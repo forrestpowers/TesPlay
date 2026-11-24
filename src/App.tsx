@@ -637,8 +637,7 @@ export default function App() {
           <Suspense fallback={<Busy label="Loading your home…" />}>
             <Home hideYouTubeShorts={hideYouTubeShorts} cacheIdentity={`${auth.user.id}:${auth.activeProfileId}`} key={auth?.activeProfileId || "preview"} connections={connections} library={rawLibrary} signedIn={signedIn} query={query} connectionsReady={connectionsReady} connectionsError={connectionsError} onReloadConnections={reloadConnections} canManage={auth.user.canManageConnections ?? auth.user.role === "owner"}
               onOpen={open} onFavorite={favorite} onDetails={inspect} onConnect={connect} onNavigate={navigate}
-              onBrowse={(c, parent, nextKind, channel, category) => { browse(c); if (parent) open(parent); else if (nextKind) setKind(nextKind); if(channel) setYouTubeChannel(channel);if(category)setBrowseCategory(category); }}
-              onUnavailable={() => showToast("Crunchyroll does not currently provide a supported in-app playback integration for TesPlay.")} />
+              onBrowse={(c, parent, nextKind, channel, category) => { browse(c); if (parent) open(parent); else if (nextKind) setKind(nextKind); if(channel) setYouTubeChannel(channel);if(category)setBrowseCategory(category); }} />
           </Suspense>
         )}
         {view === "connections" && !(auth.user.canManageConnections ?? auth.user.role === "owner") && <section className="page-section"><div className="page-heading"><div><span className="eyebrow">Shared with you</span><h1>Your connections</h1><p>Your server owner manages these libraries and their settings.</p></div></div><div className="shared-connections">{connections.map(c=><button className="button ghost" key={c.id} onClick={()=>browse(c)}>{c.type==="youtube"?"YouTube":c.name}<ArrowRight size={17}/></button>)}</div>{!connections.length&&<Empty title="No libraries shared yet">Your server owner can give your account access in Accounts & access.</Empty>}</section>}

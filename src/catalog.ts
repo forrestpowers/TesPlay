@@ -1,4 +1,5 @@
-export const services = [
+/** Every provider TesPlay can name, including ones no longer offered for new connections. */
+export const allServices = [
   {
     id: "xtream",
     name: "IPTV",
@@ -26,14 +27,6 @@ export const services = [
       "Play a video link, or connect your Google account or a YouTube API key to search here.",
   },
   {
-    id: "crunchyroll",
-    name: "Crunchyroll",
-    subtitle: "A world of anime",
-    color: "#ff8438",
-    letters: "◉",
-    description: "In-app playback is not currently available for this service.",
-  },
-  {
     id: "drive",
     name: "Google Drive",
     subtitle: "Your cloud, on the big screen",
@@ -51,3 +44,6 @@ export const services = [
       "Connect your Stremio account, choose your addons and watch here with TesPlayer.",
   },
 ];
+
+/** Providers offered for new connections. Plex is no longer offered; existing Plex connections keep working. */
+export const services = allServices.filter((service) => service.id !== "plex");
