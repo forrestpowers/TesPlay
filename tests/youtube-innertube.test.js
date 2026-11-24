@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
 import {
-  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, relativeDate, clockDuration, rawTvPage, TV_SCOPES, SIGN_IN_REQUIRED,
+  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, audioRank, relativeDate, clockDuration, rawTvPage, TV_SCOPES, SIGN_IN_REQUIRED,
 } from '../server/youtube-innertube.js';
 
 const NOW = Date.parse('2026-11-23T12:00:00Z');
@@ -63,6 +63,21 @@ test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 1
   assert.equal(chooseStreams(drm), null);
   const noAac = streaming(); noAac.adaptive_formats = noAac.adaptive_formats.filter(f => !/mp4a/.test(f.mime_type));
   assert.equal(chooseStreams(noAac), null);
+  // Dubbed videos: several itag 140 tracks; the original wins even when a dub is marked default.
+  const dubbed = streaming();
+  dubbed.adaptive_formats = dubbed.adaptive_formats.filter(f => f.itag !== 140).concat([
+    { ...format(140, 'audio/mp4; codecs="mp4a.40.2"'), audio_track: { id: 'es.4', display_name: 'Spanish', audio_is_default: true }, is_dubbed: true, language: 'es' },
+    { ...format(140, 'audio/mp4; codecs="mp4a.40.2"'), audio_track: { id: 'fr.10', display_name: 'French (auto)', audio_is_default: false }, is_auto_dubbed: true, language: 'fr' },
+    { ...format(140, 'audio/mp4; codecs="mp4a.40.2"'), audio_track: { id: 'en.4', display_name: 'English original', audio_is_default: false }, is_original: true, language: 'en' },
+  ]);
+  assert.equal(chooseStreams(dubbed).audio.language, 'en');
+  const sabrLike = [
+    { itag: 140, mimeType: 'audio/mp4; codecs="mp4a.40.2"', hasAudio: true, bitrate: 130000, audioTrackId: 'de.4', isDubbed: true, language: 'de' },
+    { itag: 140, mimeType: 'audio/mp4; codecs="mp4a.40.2"', hasAudio: true, bitrate: 130000, audioTrackId: 'en.4', isOriginal: true, language: 'en' },
+    { itag: 140, mimeType: 'audio/mp4; codecs="mp4a.40.2"', hasAudio: true, bitrate: 130000, audioTrackId: 'pt.10', isAutoDubbed: true, language: 'pt' },
+  ];
+  assert.deepEqual(sabrLike.map(audioRank), [4, 0, 4]);
+  assert.equal(audioRank({ itag: 140, hasAudio: true }), 1, 'a single-track video has no track id and counts as the default');
 });
 
 function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '' } = {}) {
