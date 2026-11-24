@@ -215,7 +215,9 @@ export async function defaultProbe(url, contentLength) {
 }
 export function createInnertubeService({
   getConnection, saveConfig, env = process.env, fetchImpl = globalThis.fetch, now = Date.now, log = console,
-  createInnertube, cacheFactory, maxHeight = 1080, pageLifetime = 15 * 60000, requestTimeout = 25000,
+  // 720p30 is what the Tesla browser decodes comfortably; raise with YOUTUBE_MAX_HEIGHT=1080.
+  createInnertube, cacheFactory, maxHeight = [1080, 720, 480, 360].includes(Number(env.YOUTUBE_MAX_HEIGHT)) ? Number(env.YOUTUBE_MAX_HEIGHT) : 720,
+  pageLifetime = 15 * 60000, requestTimeout = 25000,
   probe = defaultProbe, visitorData = fetchVisitorData, visitorLifetime = 6 * 3600000,
   potProviderUrl = env.YOUTUBE_POT_PROVIDER_URL || '', potLifetime = 5 * 3600000,
   sabr = null, sabrMode = env.YOUTUBE_SABR || 'auto',

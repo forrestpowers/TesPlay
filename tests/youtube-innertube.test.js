@@ -53,6 +53,15 @@ test('item mappers read youtubei.js nodes into MediaItem shapes and reject malfo
   assert.equal(clockDuration('1:02:03'), 3723); assert.equal(clockDuration('LIVE'), undefined);
 });
 
+test('the service defaults to a 720p ceiling for the car and honours YOUTUBE_MAX_HEIGHT', async () => {
+  const seen = [];
+  const service = createInnertubeService({ getConnection: () => null, saveConfig: () => {}, env: {}, createInnertube: async () => ({ session: { on() {}, signIn: async () => {}, oauth: {}, player: {} }, getBasicInfo: async () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming([1080, 720]) }) }), visitorData: async () => 'v', probe: async () => true, log: { warn: () => {} } });
+  assert.equal((await service.resolve({ user: { id: 'o' } }, { id: 'c', type: 'youtube', config: {} }, 'aqz-KE-bpKQ')).video.height, 720);
+  const tall = createInnertubeService({ getConnection: () => null, saveConfig: () => {}, env: { YOUTUBE_MAX_HEIGHT: '1080' }, createInnertube: async () => ({ session: { on() {}, signIn: async () => {}, oauth: {}, player: {} }, getBasicInfo: async () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming([1080, 720]) }) }), visitorData: async () => 'v', probe: async () => true, log: { warn: () => {} } });
+  assert.equal((await tall.resolve({ user: { id: 'o' } }, { id: 'c', type: 'youtube', config: {} }, 'aqz-KE-bpKQ')).video.height, 1080);
+  void seen;
+});
+
 test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 140 and refuses DRM or SABR-only data', () => {
   const chosen = chooseStreams(streaming());
   assert.equal(chosen.video.itag, 137); assert.equal(chosen.video.height, 1080); assert.equal(chosen.audio.itag, 140);
@@ -138,7 +147,7 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
   };
   const service = createInnertubeService({
     getConnection: (_req, id) => connections.get(id), saveConfig: (_req, c, patch) => { saved.push(patch); const current = connections.get(c.id); current.config = { ...current.config, ...patch }; },
-    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n', potProviderUrl,
+    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n', potProviderUrl, maxHeight: 1080,
   });
   return { service, connections, saved, fetchCalls, created, req: { user: { id: 'owner' } } };
 }

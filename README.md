@@ -47,7 +47,7 @@ Connect **Plex · Xtream Codes · M3U · Google Drive · Stremio addons · YouTu
 | M3U IPTV | Playlist import and grouped channels | Your own authorized playlist; XMLTV guide import is not implemented |
 | Google Drive | OAuth, folder browsing and streaming supported media | Your Google OAuth web client and enabled Drive API |
 | Stremio addons | Account/QR linking or configured addon links, catalogs, search, episodes and direct HTTP(S)/HLS sources | Authorized addons and any access they require; raw torrents and DRM sources are unsupported |
-| YouTube | Home feed, subscriptions, watch history, search, channels, playlists and TesPlayer playback | Google TV OAuth client for “Sign in on this screen” (InnerTube), or a Data API key / web OAuth client; optional yt-dlp resolver as playback fallback |
+| YouTube | Home feed, subscriptions, watch history, search, channels, playlists and TesPlayer playback (720p30 by default) | Google TV OAuth client for “Sign in on this screen” (InnerTube), or a Data API key / web OAuth client; optional yt-dlp resolver as playback fallback |
 | Radio | Station search, favorites and audio playback | A reachable, compatible station stream |
 
 Service availability, codecs, provider quotas and simultaneous-stream limits still apply. Native Crunchyroll, Jellyfin/Emby adapters, DRM playback and general screen mirroring are not implemented. Existing server-folder connections remain supported, but Local/SMB is not offered as a new connection in the UI.
