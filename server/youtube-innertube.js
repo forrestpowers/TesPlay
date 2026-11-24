@@ -22,9 +22,9 @@ const YT_REVOKE_URL = 'https://www.youtube.com/o/oauth2/revoke';
 // Bearer token. Google rejects it for some custom clients; the Data API scope is
 // the documented alternative for a TV-type client.
 export const TV_SCOPES = ['http://gdata.youtube.com https://www.googleapis.com/auth/youtube-paid-content', 'https://www.googleapis.com/auth/youtube'];
-const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/, CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/, PLAYLIST_ID = /^[A-Za-z0-9_-]{10,100}$/;
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/, CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/, PLAYLIST_ID = /^(?:WL|LL|[A-Za-z0-9_-]{10,100})$/; // WL = Watch later, LL = Liked videos
 const SHORT_TYPES = new Set(['ReelItem', 'ShortsLockupView']);
-const text = value => plainText(value == null ? '' : typeof value === 'string' ? value : typeof value.toString === 'function' ? value.toString() : '').trim();
+const text = value => plainText(value == null ? '' : typeof value === 'string' ? value : typeof value.text === 'string' ? value.text : typeof value.toString === 'function' ? value.toString() : '').trim();
 
 export function isInnertubeMode(c) { return c?.config?.authMode === 'innertube'; }
 export function innertubeSignedIn(c) { return isInnertubeMode(c) && typeof c.config.tvRefreshToken === 'string' && c.config.tvRefreshToken.length > 0; }
@@ -57,9 +57,12 @@ function lockupParts(node) {
   return rows.flatMap(row => (row.metadata_parts || []).map(part => part.text).filter(Boolean));
 }
 function overlayBadges(node) {
-  const overlays = node?.content_image?.overlays || [];
+  const overlays = node?.content_image?.overlays || node?.header?.thumbnail_overlays || [];
   return overlays.flatMap(o => (o.badges || []).map(b => text(b.text)).concat(o.text ? [text(o.text)] : []));
 }
+/** Text lines of a TV-app Tile: ["Channel name", "9.7K views", "3 days ago", ...]. */
+const tileLines = node => (node?.metadata?.lines || []).flatMap(line => (line.items || []).map(item => text(item.text)).filter(Boolean));
+const tileType = node => String(node?.content_type || '').replace(/^TILE_CONTENT_TYPE_/, '');
 /** Convert any youtubei.js video-like node into TesPlay's MediaItem shape (without proxied artwork). */
 export function videoItem(node, { connectionId, channel } = {}, now = Date.now()) {
   if (!node || typeof node !== 'object') return null;
@@ -67,16 +70,18 @@ export function videoItem(node, { connectionId, channel } = {}, now = Date.now()
   const id = [node.video_id, node.content_id, node.id, node.endpoint?.payload?.videoId, node.on_tap_endpoint?.payload?.videoId].find(v => VIDEO_ID.test(String(v || '')));
   if (!id) return null;
   if (type === 'LockupView' && !['VIDEO', 'SHORT', 'UNSPECIFIED', undefined].includes(node.content_type)) return null;
+  if (type === 'Tile' && !['VIDEO', 'SHORT', 'SHORTS', ''].includes(tileType(node))) return null;
   const title = text(node.title ?? node.metadata?.title ?? node.overlay_metadata?.primary_text ?? node.accessibility_text);
   if (!title || ['Private video', 'Deleted video', '[Private video]', '[Deleted video]'].includes(title)) return null;
   const parts = lockupParts(node);
-  const author = node.author?.name ? text(node.author.name) : text(parts.find(t => runEndpointId(t, 'browseId'))) || channel?.title || '';
+  const lines = type === 'Tile' ? tileLines(node) : [];
+  const author = node.author?.name ? text(node.author.name) : text(parts.find(t => runEndpointId(t, 'browseId'))) || (lines.length && !/\b(views|watching|ago)\b/i.test(lines[0]) ? lines[0] : '') || channel?.title || '';
   const channelId = [node.author?.id, ...parts.map(t => runEndpointId(t, 'browseId')), channel?.id].find(v => CHANNEL_ID.test(String(v || '')));
   const durationValue = node.duration?.seconds ?? (typeof node.duration === 'object' && node.duration ? clockDuration(text(node.duration)) : typeof node.duration === 'number' ? node.duration : undefined) ?? clockDuration(text(node.length_text)) ?? overlayBadges(node).map(clockDuration).find(Boolean);
-  const publishedText = text(node.published) || parts.map(text).find(t => /\bago\b/i.test(t)) || '';
+  const publishedText = text(node.published) || [...parts.map(text), ...lines].find(t => /\bago\b/i.test(t)) || '';
   const live = node.is_live === true || overlayBadges(node).some(t => /^LIVE$/i.test(t)) || /^(Streamed|Live)/i.test(publishedText) && !durationValue;
-  const short = SHORT_TYPES.has(type) || node.content_type === 'SHORT';
-  const thumbnails = node.thumbnails || node.content_image?.image || node.content_image?.primary_thumbnail?.image || node.thumbnail?.image || [];
+  const short = SHORT_TYPES.has(type) || node.content_type === 'SHORT' || tileType(node) === 'SHORTS';
+  const thumbnails = node.thumbnails || node.content_image?.image || node.content_image?.primary_thumbnail?.image || node.thumbnail?.image || node.header?.thumbnail || [];
   return {
     id, connectionId, source: 'YouTube', providerType: 'youtube', type: 'video', title,
     ...(text(node.description_snippet || node.description) ? { description: text(node.description_snippet || node.description) } : {}),
@@ -91,30 +96,62 @@ export function videoItem(node, { connectionId, channel } = {}, now = Date.now()
 export function channelItem(node) {
   if (!node || typeof node !== 'object') return null;
   if (node.type === 'LockupView' && node.content_type !== 'CHANNEL') return null;
+  if (node.type === 'Tile' && tileType(node) !== 'CHANNEL') return null;
   const id = [node.author?.id, node.content_id, node.id, node.endpoint?.payload?.browseId].find(v => CHANNEL_ID.test(String(v || '')));
   if (!id) return null;
   const title = text(node.author?.name ?? node.title ?? node.metadata?.title);
   if (!title) return null;
-  const parts = lockupParts(node).map(text);
+  const parts = [...lockupParts(node).map(text), ...tileLines(node)];
   const count = text(node.video_count) || text(node.subscriber_count) || parts.find(t => /subscriber|video/i.test(t)) || '';
   const videoCount = /(\d[\d,.]*)\s*videos?/i.exec(count) ? Number(/(\d[\d,.]*)\s*videos?/i.exec(count)[1].replace(/[,.]/g, '')) : undefined;
-  const thumbnails = node.author?.thumbnails || node.thumbnails || node.content_image?.image || node.content_image?.avatar?.image || node.content_image?.primary_thumbnail?.image || [];
+  const thumbnails = node.author?.thumbnails || node.thumbnails || node.content_image?.image || node.content_image?.avatar?.image || node.content_image?.primary_thumbnail?.image || node.header?.thumbnail || [];
   return { id, title, description: text(node.description_snippet), thumbnail: thumbnailUrl(thumbnails), ...(videoCount ? { videoCount } : {}), ...(count ? { subtitle: count } : {}) };
 }
 export function playlistItem(node) {
   if (!node || typeof node !== 'object') return null;
   if (node.type === 'LockupView' && !['PLAYLIST', 'PODCAST', 'ALBUM', 'COURSE'].includes(node.content_type)) return null;
+  if (node.type === 'Tile' && tileType(node) !== 'PLAYLIST') return null;
   const id = [node.id, node.content_id, node.endpoint?.payload?.playlistId].find(v => PLAYLIST_ID.test(String(v || '')) && !VIDEO_ID.test(String(v || '')));
   if (!id) return null;
   const title = text(node.title ?? node.metadata?.title);
   if (!title) return null;
-  const countText = text(node.video_count ?? node.video_count_short) || overlayBadges(node).find(t => /video|episode|lesson/i.test(t)) || lockupParts(node).map(text).find(t => /video|episode/i.test(t)) || '';
+  const countText = text(node.video_count ?? node.video_count_short) || overlayBadges(node).find(t => /video|episode|lesson/i.test(t)) || [...lockupParts(node).map(text), ...tileLines(node)].find(t => /video|episode/i.test(t)) || '';
   const match = /(\d[\d,.]*)/.exec(countText);
-  const thumbnails = node.thumbnails || node.content_image?.primary_thumbnail?.image || node.content_image?.image || [];
+  const thumbnails = node.thumbnails || node.content_image?.primary_thumbnail?.image || node.content_image?.image || node.header?.thumbnail || [];
   return { id, title, thumbnail: thumbnailUrl(thumbnails), videoCount: match ? Number(match[1].replace(/[,.]/g, '')) : 0 };
 }
 const uniqueBy = (items, key) => [...new Map(items.filter(Boolean).map(i => [i[key], i])).values()];
-export const feedVideos = (feed, context, now) => uniqueBy((feed?.videos || []).map(n => videoItem(n, context, now)), 'id');
+/** Video nodes of a feed: the web-style nodes youtubei.js collects plus the TV app's Tile nodes. */
+export const feedNodes = (feed, kind = 'videos') => [...(feed?.[kind] || []), ...(feed?.memo?.get?.('Tile') || [])];
+export const feedVideos = (feed, context, now) => uniqueBy(feedNodes(feed).map(n => videoItem(n, context, now)), 'id');
+
+/** Every value stored under `key` anywhere in a raw InnerTube response. */
+export function rawFind(data, key, depth = 0, acc = []) {
+  if (depth > 60 || data == null || typeof data !== 'object') return acc;
+  if (Array.isArray(data)) { for (const item of data) rawFind(item, key, depth + 1, acc); return acc; }
+  for (const [name, value] of Object.entries(data)) { if (name === key) acc.push(value); rawFind(value, key, depth + 1, acc); }
+  return acc;
+}
+const rawText = value => value?.simpleText ?? (Array.isArray(value?.runs) ? value.runs.map(run => run.text).join('') : '');
+/** The TV app's tileRenderer as the Tile shape the item mappers understand. */
+export function rawTileNode(tile) {
+  const header = tile?.header?.tileHeaderRenderer || {};
+  const metadata = tile?.metadata?.tileMetadataRenderer || {};
+  return {
+    type: 'Tile', content_id: tile?.contentId, content_type: tile?.contentType,
+    header: {
+      thumbnail: header.thumbnail?.thumbnails || [],
+      thumbnail_overlays: (header.thumbnailOverlays || []).map(overlay => overlay.thumbnailOverlayTimeStatusRenderer ? { text: rawText(overlay.thumbnailOverlayTimeStatusRenderer.text), style: overlay.thumbnailOverlayTimeStatusRenderer.style } : {}),
+    },
+    metadata: { title: { text: rawText(metadata.title) }, lines: (metadata.lines || []).map(line => ({ items: (line.lineRenderer?.items || []).map(item => ({ text: { text: rawText(item.lineItemRenderer?.text) } })) })) },
+  };
+}
+/** Tiles and the next continuation token of a raw TV browse response. */
+export function rawTvPage(data) {
+  const tiles = rawFind(data, 'tileRenderer').map(rawTileNode);
+  const continuation = rawFind(data, 'continuationCommand').map(c => c?.token).find(Boolean) || rawFind(data, 'nextContinuationData').map(c => c?.continuation).find(Boolean) || null;
+  return { tiles, continuation: typeof continuation === 'string' && continuation.length < 4096 ? continuation : null };
+}
 
 /** Choose a progressive H.264 video stream at or below the ceiling plus an AAC audio stream. */
 export function chooseStreams(streamingData, { maxHeight = 1080 } = {}) {
@@ -305,7 +342,8 @@ export function createInnertubeService({
     let entry = clients.get(c.id);
     if (!entry || entry.key !== key) {
       const promise = (async () => {
-        const yt = await build();
+        // YouTube only honours the TV app's tokens on InnerTube requests made as the TV client.
+        const yt = await build({ client_type: 'TVHTML5' });
         yt.session.on?.('update-credentials', ({ credentials }) => {
           if (credentials?.access_token) { try { saveConfig(req, c, { tvAccessToken: credentials.access_token, tvExpiresAt: Date.parse(credentials.expiry_date) || now() + 3600000 }); } catch (error) { log.warn?.('YouTube token save failed', error.message); } }
         });
@@ -338,63 +376,78 @@ export function createInnertubeService({
     return providerError('YouTube did not return this content. Try again in a moment.', 502);
   }
   const guard = async (work) => { try { return await timed(work()); } catch (error) { throw translate(error); } };
-  function pageToken(req, c, feed, map) {
+  /** Remember how to fetch the next page; the caller gets an opaque token. */
+  function pageToken(req, c, next) {
     for (const [key, value] of pages) if (value.expires < now()) pages.delete(key);
     if (pages.size >= 500) pages.delete(pages.keys().next().value);
-    if (!feed?.has_continuation) return null;
+    if (!next) return null;
     const token = randomBytes(12).toString('base64url');
-    pages.set(token, { feed, map, userId: req.user.id, connectionId: c.id, expires: now() + pageLifetime });
+    pages.set(token, { next, userId: req.user.id, connectionId: c.id, expires: now() + pageLifetime });
     return token;
   }
   async function continuation(req, c, token) {
     const entry = pages.get(token);
     if (!entry || entry.userId !== req.user.id || entry.connectionId !== c.id || entry.expires < now()) throw providerError('This page expired. Reload the list.', 410);
     pages.delete(token);
-    const feed = await guard(() => entry.feed.getContinuation());
-    return { ...entry.map(feed), nextPageToken: pageToken(req, c, feed, entry.map) };
+    return entry.next();
   }
   const context = c => ({ connectionId: c.id });
-  const videoPage = c => feed => ({ items: feedVideos(feed, context(c), now()) });
-  async function listing(req, c, token, open, map) {
-    if (token) return continuation(req, c, token);
-    const feed = await guard(open);
-    return { ...map(feed), nextPageToken: pageToken(req, c, feed, map) };
+  const mappers = {
+    items: (c, nodes) => ({ items: uniqueBy(nodes.map(n => videoItem(n, context(c), now())), 'id') }),
+    channels: (_c, nodes) => ({ channels: uniqueBy(nodes.map(channelItem), 'id') }),
+    playlists: (_c, nodes) => ({ playlists: uniqueBy(nodes.map(playlistItem), 'id') }),
+  };
+  /**
+   * A signed-in TV-app browse surface (Home, subscriptions, history, playlists, a playlist, a channel).
+   * The TV responses carry tileRenderer nodes that youtubei.js does not collect, so read them raw.
+   */
+  async function tvPage(req, c, args, kind) {
+    const yt = await signedClient(req, c);
+    const response = await guard(() => yt.actions.execute('/browse', args));
+    const page = rawTvPage(await response.data);
+    const result = mappers[kind](c, page.tiles);
+    return { ...result, nextPageToken: pageToken(req, c, page.continuation ? () => tvPage(req, c, { continuation: page.continuation }, kind) : null) };
   }
-  const home = (req, c, token) => signedClient(req, c).then(yt => listing(req, c, token, () => yt.getHomeFeed(), videoPage(c)));
-  const subscriptionsFeed = (req, c, token) => signedClient(req, c).then(yt => listing(req, c, token, () => yt.getSubscriptionsFeed(), videoPage(c)));
-  const history = (req, c, token) => signedClient(req, c).then(yt => listing(req, c, token, () => yt.getHistory(), videoPage(c)));
-  const channels = (req, c, token) => signedClient(req, c).then(yt => listing(req, c, token, () => yt.getChannelsFeed(), feed => ({ channels: uniqueBy((feed.channels || []).map(channelItem), 'id') })));
-  const playlists = (req, c, token) => signedClient(req, c).then(yt => listing(req, c, token, () => yt.getPlaylists(), feed => ({ playlists: uniqueBy((feed.playlists || []).map(playlistItem), 'id') })));
+  const browse = (browseId, kind) => (req, c, token) => token ? continuation(req, c, token) : tvPage(req, c, { browseId }, kind);
+  const home = browse('FEwhat_to_watch', 'items');
+  const subscriptionsFeed = browse('FEsubscriptions', 'items');
+  const history = browse('FEhistory', 'items');
+  const channels = browse('FEchannels', 'channels');
+  const playlists = browse('FEplaylist_aggregation', 'playlists');
   async function search(req, c, query, token) {
     const yt = await signedClient(req, c);
     const q = String(query || '').trim().slice(0, 200);
     if (!q) return { items: [], channels: [], nextPageToken: null };
     if (token) return continuation(req, c, token);
+    const page = async feed => ({ ...mappers.items(c, feedNodes(feed)), nextPageToken: pageToken(req, c, feed.has_continuation ? async () => page(await guard(() => feed.getContinuation())) : null) });
     const [videos, mixed] = await Promise.all([guard(() => yt.search(q, { type: 'video' })), guard(() => yt.search(q)).catch(() => null)]);
-    return { ...videoPage(c)(videos), channels: uniqueBy((mixed?.channels || []).map(channelItem), 'id').slice(0, 12), nextPageToken: pageToken(req, c, videos, videoPage(c)) };
+    return { ...await page(videos), channels: uniqueBy([...(mixed?.channels || []), ...feedNodes(mixed, 'channels')].map(channelItem), 'id').slice(0, 12) };
   }
   async function channelVideos(req, c, channelId, token) {
     if (!CHANNEL_ID.test(String(channelId))) throw providerError('Invalid YouTube channel.');
-    const yt = await signedClient(req, c);
     if (token) return continuation(req, c, token);
-    const channel = await guard(() => yt.getChannel(channelId));
-    if (!channel.has_videos) throw providerError('This channel has no available uploads.', 404);
-    const videos = await guard(() => channel.getVideos());
-    const map = feed => ({ items: feedVideos(feed, { connectionId: c.id, channel: { id: channelId, title: text(channel.metadata?.title) } }, now()) });
-    return { ...map(videos), nextPageToken: pageToken(req, c, videos, map) };
+    // Public channel pages list uploads newest first through the web client; the TV surface mixes shelves.
+    try {
+      const yt = await anonymousClient();
+      const channel = await guard(() => yt.getChannel(channelId));
+      if (!channel.has_videos) throw providerError('This channel has no available uploads.', 404);
+      const title = text(channel.metadata?.title);
+      const map = feed => ({ items: uniqueBy(feedNodes(feed).map(n => videoItem(n, { connectionId: c.id, channel: { id: channelId, title } }, now())), 'id') });
+      const paged = async feed => ({ ...map(feed), nextPageToken: pageToken(req, c, feed.has_continuation ? async () => paged(await guard(() => feed.getContinuation())) : null) });
+      return paged(await guard(() => channel.getVideos()));
+    } catch (error) {
+      if (error?.status === 404) throw error;
+      return tvPage(req, c, { browseId: channelId, params: 'EgZ2aWRlb3PyBgQKAjoA' }, 'items');
+    }
   }
   async function playlistVideos(req, c, playlistId, token) {
     if (!PLAYLIST_ID.test(String(playlistId))) throw providerError('Invalid YouTube playlist.');
-    const yt = await signedClient(req, c);
     if (token) return continuation(req, c, token);
-    const playlist = await guard(() => yt.getPlaylist(playlistId));
-    const map = feed => ({ items: uniqueBy((feed.items || feed.videos || []).map(n => videoItem(n, context(c), now())), 'id') });
-    return { ...map(playlist), nextPageToken: pageToken(req, c, playlist, map) };
+    return tvPage(req, c, { browseId: `VL${playlistId}` }, 'items');
   }
   async function test(req, c) {
     if (!innertubeSignedIn(c)) throw providerError(SIGN_IN_REQUIRED, 409);
-    const yt = await signedClient(req, c);
-    await guard(() => yt.getHomeFeed());
+    await tvPage(req, c, { browseId: 'FEwhat_to_watch' }, 'items');
     return true;
   }
   /** Direct H.264 + AAC stream URLs for TesPlayer's dual-input path, or null when InnerTube cannot supply them. */

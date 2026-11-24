@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
 import {
-  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, relativeDate, clockDuration, TV_SCOPES, SIGN_IN_REQUIRED,
+  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, relativeDate, clockDuration, rawTvPage, TV_SCOPES, SIGN_IN_REQUIRED,
 } from '../server/youtube-innertube.js';
 
 const NOW = Date.parse('2026-11-23T12:00:00Z');
@@ -14,6 +14,12 @@ const lockup = (id, title, parts = [], { type = 'VIDEO', badge = '12:34', image 
   content_image: { image: [{ url: image, width: 720 }, { url: image.replace('hq720', 'mq'), width: 320 }], overlays: [{ badges: [{ text: badge }] }] },
   duration: { text: badge, seconds: clockDuration(badge) || 0 },
 });
+const rawTile = (id, title, lines, { type = 'VIDEO', badge = '12:34', thumb = `https://i.ytimg.com/vi/${id}/hqdefault.jpg` } = {}) => ({ tileRenderer: {
+  contentId: id, contentType: `TILE_CONTENT_TYPE_${type}`,
+  header: { tileHeaderRenderer: { thumbnail: { thumbnails: [{ url: thumb, width: 480, height: 360 }] }, thumbnailOverlays: [{ thumbnailOverlayResumePlaybackRenderer: { percentDurationWatched: 10 } }, { thumbnailOverlayTimeStatusRenderer: { text: { simpleText: badge }, style: badge === 'LIVE' ? 'LIVE' : 'DEFAULT' } }] } },
+  metadata: { tileMetadataRenderer: { title: { simpleText: title }, lines: lines.map(parts => ({ lineRenderer: { items: parts.map(p => ({ lineItemRenderer: { text: typeof p === 'string' ? { simpleText: p } : { runs: [{ text: p.run }] } } })) } })) } },
+} });
+const tvResponse = (tiles, continuation) => ({ contents: { tvBrowseRenderer: { content: { tvSurfaceContentRenderer: { content: { gridRenderer: { items: tiles, ...(continuation ? { continuations: [{ nextContinuationData: { continuation } }] } : {}) } } } } } } });
 const format = (itag, mime, extra = {}) => ({ itag, mime_type: mime, has_video: mime.startsWith('video'), has_audio: mime.startsWith('audio'), url: `https://rr1---sn-test.googlevideo.com/videoplayback?itag=${itag}`, bitrate: 1000 * itag, ...extra, decipher: async () => `https://rr1---sn-test.googlevideo.com/videoplayback?itag=${itag}&n=ok` });
 const streaming = (heights = [1080, 720, 2160]) => ({ adaptive_formats: [
   ...heights.map(h => format(h === 2160 ? 313 : h === 1080 ? 137 : 136, h === 2160 ? 'video/webm; codecs="vp9"' : 'video/mp4; codecs="avc1.640028"', { height: h, fps: 30 })),
@@ -77,14 +83,24 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
       session: { on: (name, fn) => { events[name] = fn; }, signIn: async tokens => { yt.session.oauth.oauth2_tokens = tokens; yt.session.logged_in = true; }, oauth: { oauth2_tokens: null, setTokens(t) { this.oauth2_tokens = t; }, getClientID: async () => ({ client_id: 'yt-tv-client.apps.googleusercontent.com', client_secret: 'yt-tv-secret' }) }, player: { id: 'p' }, logged_in: false },
       calls: [], events,
       getBasicInfo: async (id, options) => { yt.calls.push(['getBasicInfo', id, options.client]); return info(options.client, yt); },
-      getHomeFeed: async () => feedOf([{ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run('Home one'), author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' } }], [{ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('Home two') }]),
-      getSubscriptionsFeed: async () => feedOf([{ type: 'Video', video_id: 'MF1qEhBSfq4', title: run('New upload'), published: run('1 day ago') }]),
-      getHistory: async () => feedOf([{ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run('Watched') }]),
-      getChannelsFeed: async () => ({ ...feedOf([]), channels: [{ type: 'Channel', author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' } }] }),
-      getPlaylists: async () => ({ ...feedOf([]), playlists: [{ type: 'GridPlaylist', id: 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6', title: run('Fundamentals'), video_count: run('43 videos') }] }),
+      browses: [],
+      actions: { execute: async (endpoint, args) => {
+        yt.browses.push({ endpoint, args });
+        const pages = {
+          FEwhat_to_watch: tvResponse([rawTile('aqz-KE-bpKQ', 'Home one', [[{ run: 'Blender' }], ['9.7K views', '3 days ago']], { badge: '10:35' })], 'home-page-2'),
+          'home-page-2': tvResponse([rawTile('MF1qEhBSfq4', 'Home two', [['Blender'], ['1K views']])]),
+          FEsubscriptions: tvResponse([rawTile('MF1qEhBSfq4', 'New upload', [['Scott Manley'], ['111K views', '1 day ago']]), rawTile('pvUy69I_Xuk', 'A short', [['Someone']], { type: 'SHORTS', badge: '0:45' })]),
+          FEhistory: tvResponse([rawTile('aqz-KE-bpKQ', 'Watched', [['Blender'], ['49 watching']], { badge: 'LIVE' })]),
+          FEchannels: tvResponse([rawTile('UCSMOQeBJ2RAnuFungnQOxLg', 'Blender', [['@BlenderOfficial'], ['1.73M subscribers']], { type: 'CHANNEL', thumb: '//yt3.googleusercontent.com/avatar=s176' })]),
+          FEplaylist_aggregation: tvResponse([rawTile('WL', 'Watch later', [['Private']], { type: 'PLAYLIST', badge: '33 videos' }), rawTile('PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6', 'Fundamentals', [['Blender']], { type: 'PLAYLIST', badge: '43 videos' })]),
+          VLWL: tvResponse([rawTile('MF1qEhBSfq4', 'Lesson 1', [['ThoracicSurgeons'], ['2 years ago']])]),
+          UCSMOQeBJ2RAnuFungnQOxLg: tvResponse([rawTile('pvUy69I_Xuk', 'Channel reel', [['Blender']])]),
+        };
+        const data = pages[args.continuation || args.browseId] || tvResponse([]);
+        return { data: Promise.resolve(data) };
+      } },
       search: async (q, filters) => filters?.type === 'video' ? feedOf([{ type: 'Video', video_id: 'aqz-KE-bpKQ', title: run(`Result for ${q}`) }]) : { ...feedOf([]), channels: [{ type: 'Channel', author: { id: 'UCSMOQeBJ2RAnuFungnQOxLg', name: 'Blender' } }] },
       getChannel: async id => ({ has_videos: true, metadata: { title: 'Blender' }, getVideos: async () => feedOf([lockup('pvUy69I_Xuk', 'Channel upload', ['1K views', '2 days ago'])]) }),
-      getPlaylist: async id => ({ items: [lockup('MF1qEhBSfq4', 'Lesson 1')], has_continuation: false }),
     };
     created.push(yt);
     return yt;
@@ -171,12 +187,17 @@ test("without a custom client the sign-in uses YouTube's own TV-app client throu
   assert.equal(f.saved.at(-1).tvBuiltinClientId, null);
 });
 
-test('browsing uses one signed-in client per connection, refreshes expired tokens through Google and pages through continuations', async () => {
+test('browsing uses one signed-in TV client per connection, refreshes expired tokens through Google and pages through TV continuations', async () => {
   const f = fixture({ config: { tvAccessToken: 'stale', tvRefreshToken: 'rt', tvExpiresAt: NOW - 1 }, fetchResponses: [{ status: 200, body: { access_token: 'fresh', expires_in: 3600 } }] });
   const c = f.connections.get('c1');
   const home = await f.service.home(f.req, c);
   assert.deepEqual(home.items.map(i => i.id), ['aqz-KE-bpKQ']);
   assert.equal(home.items[0].subtitle, 'Blender');
+  assert.equal(home.items[0].duration, 635);
+  assert.equal(home.items[0].publishedAt, '2026-11-20T12:00:00.000Z');
+  assert.equal(home.items[0].poster, 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg');
+  assert.equal(f.created[0].options.client_type, 'TVHTML5', 'the TV app token only works on TV-client requests');
+  assert.deepEqual(f.created[0].browses[0], { endpoint: '/browse', args: { browseId: 'FEwhat_to_watch' } });
   assert.ok(home.nextPageToken);
   assert.equal(f.fetchCalls[0].body.grant_type, 'refresh_token');
   assert.deepEqual(f.saved[0], { tvAccessToken: 'fresh', tvExpiresAt: NOW + 3600000 });
@@ -185,22 +206,43 @@ test('browsing uses one signed-in client per connection, refreshes expired token
   assert.deepEqual(f.created[0].session.oauth.oauth2_tokens.client, { client_id: 'tv-client', client_secret: 'tv-secret' });
   const page2 = await f.service.home(f.req, c, home.nextPageToken);
   assert.deepEqual(page2.items.map(i => i.id), ['MF1qEhBSfq4']);
+  assert.deepEqual(f.created[0].browses[1], { endpoint: '/browse', args: { continuation: 'home-page-2' } });
   assert.equal(page2.nextPageToken, null);
   await assert.rejects(f.service.home(f.req, c, home.nextPageToken), { status: 410 });
   await assert.rejects(f.service.home({ user: { id: 'other' } }, c, 'nope'), { status: 410 });
-  assert.equal((await f.service.subscriptionsFeed(f.req, c)).items[0].publishedAt, '2026-11-22T12:00:00.000Z');
-  assert.equal((await f.service.history(f.req, c)).items[0].title, 'Watched');
-  assert.deepEqual((await f.service.channels(f.req, c)).channels.map(x => x.title), ['Blender']);
-  assert.deepEqual((await f.service.playlists(f.req, c)).playlists[0], { id: 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6', title: 'Fundamentals', thumbnail: undefined, videoCount: 43 });
+  const latest = await f.service.subscriptionsFeed(f.req, c);
+  assert.equal(latest.items[0].publishedAt, '2026-11-22T12:00:00.000Z');
+  assert.equal(latest.items[0].subtitle, 'Scott Manley');
+  assert.equal(latest.items[1].contentKind, 'short');
+  const watched = (await f.service.history(f.req, c)).items[0];
+  assert.equal(watched.title, 'Watched'); assert.equal(watched.contentKind, 'live'); assert.equal(watched.duration, undefined);
+  const channelsPage = await f.service.channels(f.req, c);
+  assert.deepEqual(channelsPage.channels, [{ id: 'UCSMOQeBJ2RAnuFungnQOxLg', title: 'Blender', description: '', thumbnail: 'https://yt3.googleusercontent.com/avatar=s176', subtitle: '1.73M subscribers' }]);
+  assert.deepEqual((await f.service.playlists(f.req, c)).playlists, [
+    { id: 'WL', title: 'Watch later', thumbnail: 'https://i.ytimg.com/vi/WL/hqdefault.jpg', videoCount: 33 },
+    { id: 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6', title: 'Fundamentals', thumbnail: 'https://i.ytimg.com/vi/PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6/hqdefault.jpg', videoCount: 43 },
+  ]);
   const search = await f.service.search(f.req, c, '  blender ');
   assert.equal(search.items[0].title, 'Result for blender'); assert.equal(search.channels.length, 1);
   assert.deepEqual(await f.service.search(f.req, c, ''), { items: [], channels: [], nextPageToken: null });
   const channel = await f.service.channelVideos(f.req, c, 'UCSMOQeBJ2RAnuFungnQOxLg');
+  assert.equal(channel.items[0].title, 'Channel upload', 'public channel uploads come from the anonymous web client, newest first');
   assert.equal(channel.items[0].subtitle, 'Blender'); assert.equal(channel.items[0].channelId, 'UCSMOQeBJ2RAnuFungnQOxLg');
+  assert.equal(f.created.length, 2, 'channel pages use the anonymous client');
   await assert.rejects(f.service.channelVideos(f.req, c, 'bad'), { status: 400 });
-  assert.equal((await f.service.playlistVideos(f.req, c, 'PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6')).items[0].title, 'Lesson 1');
-  assert.equal(f.created.length, 1);
+  const lesson = (await f.service.playlistVideos(f.req, c, 'WL')).items[0];
+  assert.equal(lesson.title, 'Lesson 1'); assert.equal(lesson.subtitle, 'ThoracicSurgeons');
   assert.equal(f.fetchCalls.length, 1);
+});
+
+test('rawTvPage reads tiles and continuation tokens out of a TV browse response', () => {
+  const page = rawTvPage(tvResponse([rawTile('aqz-KE-bpKQ', 'Tile <b>title</b>', [[{ run: 'Author' }], ['1 view']], { badge: '1:00:00' })], 'next-token'));
+  assert.equal(page.continuation, 'next-token');
+  assert.equal(page.tiles.length, 1);
+  const item = videoItem(page.tiles[0], { connectionId: 'c1' }, NOW);
+  assert.equal(item.title, 'Tile title'); assert.equal(item.subtitle, 'Author'); assert.equal(item.duration, 3600);
+  assert.deepEqual(rawTvPage({ contents: {} }), { tiles: [], continuation: null });
+  assert.equal(rawTvPage({ continuationCommand: { token: 'x'.repeat(5000) } }).continuation, null);
 });
 
 test('browsing without a completed sign-in asks for it, and a revoked refresh token asks to reconnect', async () => {

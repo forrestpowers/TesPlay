@@ -20,6 +20,16 @@ export default function YouTubeDeviceSignIn({ connectionId, signedIn, onChanged 
   const [state, setState] = useState<DeviceSignInStatus>({ status: signedIn ? 'authorized' : 'none' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // A code requested earlier (before leaving this screen, or on another screen) is still being
+  // polled by the server; show it again instead of asking Google for a new one.
+  useEffect(() => {
+    if (signedIn) return;
+    let dead = false;
+    api<DeviceSignInStatus>(`/youtube/${encodeURIComponent(connectionId)}/signin/status`)
+      .then(next => { if (!dead && next.status === 'pending' && next.userCode) setState(next); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [connectionId, signedIn]);
   useEffect(() => {
     if (state.status !== 'pending') return;
     let dead = false;
