@@ -161,10 +161,12 @@ export function chooseStreams(streamingData, { maxHeight = 1080 } = {}) {
     .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.fps || 0) - (a.fps || 0) || (b.bitrate || 0) - (a.bitrate || 0));
   // Videos with dubs carry several AAC tracks; the original language comes first, then the
   // track YouTube marks default, never auto-dubbed, described or DRC variants.
-  const audios = formats.filter(f => f.has_audio && !f.has_video && /mp4a/i.test(f.mime_type) && (f.url || f.signature_cipher || f.cipher) && !f.is_drc && !f.is_descriptive && !f.is_auto_dubbed)
-    .sort((a, b) => audioRank(a) - audioRank(b) || Number(b.itag === 140) - Number(a.itag === 140) || (b.bitrate || 0) - (a.bitrate || 0));
+  const audios = formats.filter(f => f.has_audio && !f.has_video && /mp4a/i.test(f.mime_type) && (f.url || f.signature_cipher || f.cipher) && !f.is_descriptive && !f.is_auto_dubbed && (f.audio_channels || 2) <= 2)
+    .sort((a, b) => audioRank(a) - audioRank(b) || processed(a) - processed(b) || (b.bitrate || 0) - (a.bitrate || 0));
   return videos[0] && audios[0] ? { video: videos[0], audio: audios[0] } : null;
 }
+/** YouTube lists each soundtrack three times: plain, with dynamic range compression and with voice boost. Plain sounds best. */
+export const processed = format => ((format.is_drc ?? format.isDrc) ? 1 : 0) + ((format.is_vb ?? format.isVb) ? 1 : 0);
 /** Lower is better: the original soundtrack, then the default track, then anything that is not a dub. */
 export function audioRank(format) {
   const original = format.is_original ?? format.isOriginal;
@@ -519,14 +521,16 @@ export function createInnertubeService({
         clientInfo: { clientName, clientVersion }, ...(pot ? { poToken: pot } : {}), callbacks: { onReloadPlayerResponse: reload },
       });
       stream.on('error', error => { log.warn?.(`YouTube SABR ${videoId}: ${error.message}`); void session.video.fail(error); void session.audio.fail(error); });
+      stream.on('formatInitialization', track => log.info?.(`YouTube SABR ${videoId}: server sends itag ${track.formatId?.itag} ${track.mimeType || ''}`));
       stream.on('streamProtectionStatusUpdate', status => { if (status?.status && status.status !== 1) log.warn?.(`YouTube SABR ${videoId}: stream protection status ${status.status} (a proof-of-origin token may be required).`); });
       session.abortStream = () => stream.abort();
       const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || '') && (f.height || 0) <= maxHeight).sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0))[0];
-      const aac = formats => formats.filter(f => f.hasAudio && /mp4a/i.test(f.mimeType || '') && (f.numChannels || 2) <= 2 && !f.isDrc && !f.isDescriptive && !f.isAutoDubbed)
-        .sort((a, b) => audioRank(a) - audioRank(b) || Number(b.itag === 140) - Number(a.itag === 140) || (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const aac = formats => formats.filter(f => f.hasAudio && /mp4a/i.test(f.mimeType || '') && (f.numChannels || 2) <= 2 && !f.isDescriptive && !f.isAutoDubbed)
+        .sort((a, b) => audioRank(a) - audioRank(b) || processed(a) - processed(b) || (b.bitrate || 0) - (a.bitrate || 0))[0];
       const { videoStream, audioStream, selectedFormats } = stream.start({ videoFormat: h264, audioFormat: aac, enabledTrackTypes: EnabledTrackTypes.VIDEO_AND_AUDIO, isPostLiveDvr: false });
       if (!selectedFormats.videoFormat || !selectedFormats.audioFormat) { await stream.abort(); throw providerError('YouTube offered no H.264 and AAC tracks for adaptive streaming.', 422); }
-      log.info?.(`YouTube SABR ${videoId}: video itag ${selectedFormats.videoFormat.itag} ${selectedFormats.videoFormat.height || ''}p, audio itag ${selectedFormats.audioFormat.itag}${selectedFormats.audioFormat.language ? ` ${selectedFormats.audioFormat.language}` : ''}${selectedFormats.audioFormat.isOriginal ? ' (original)' : ''}.`);
+      const audio = selectedFormats.audioFormat;
+      log.info?.(`YouTube SABR ${videoId}: video itag ${selectedFormats.videoFormat.itag} ${selectedFormats.videoFormat.height || ''}p, audio itag ${audio.itag} ${Math.round((audio.averageBitrate || audio.bitrate || 0) / 1000)}k${audio.language ? ` ${audio.language}` : ''}${audio.isOriginal ? ' original' : ''}${audio.isDrc ? ' drc' : ''}${audio.isVb ? ' voice-boost' : ''}.`);
       const spool = (readable, target) => readable.pipeTo(new WritableStream({ write: chunk => target.write(chunk), close: () => target.finish(), abort: reason => target.fail(reason) })).catch(error => target.fail(error));
       Promise.all([spool(videoStream, session.video), spool(audioStream, session.audio)]).then(() => { session.finished = true; }).catch(() => {});
       return { video: selectedFormats.videoFormat, audio: selectedFormats.audioFormat };

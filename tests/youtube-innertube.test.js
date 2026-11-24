@@ -78,6 +78,17 @@ test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 1
   ];
   assert.deepEqual(sabrLike.map(audioRank), [4, 0, 4]);
   assert.equal(audioRank({ itag: 140, hasAudio: true }), 1, 'a single-track video has no track id and counts as the default');
+  // Three copies of the original: compressed, plain, voice-boosted. Plain wins.
+  const copies = streaming();
+  copies.adaptive_formats = copies.adaptive_formats.filter(f => f.itag !== 140).concat([
+    { ...format(140, 'audio/mp4; codecs="mp4a.40.2"'), is_original: true, is_drc: true, xtags: 'drc' },
+    { ...format(140, 'audio/mp4; codecs="mp4a.40.2"'), is_original: true, xtags: 'plain' },
+    { ...format(140, 'audio/mp4; codecs="mp4a.40.2"'), is_original: true, is_vb: true, xtags: 'vb' },
+  ]);
+  assert.equal(chooseStreams(copies).audio.xtags, 'plain');
+  const surround = streaming();
+  surround.adaptive_formats.push({ ...format(258, 'audio/mp4; codecs="mp4a.40.2"'), audio_channels: 6, bitrate: 384000 });
+  assert.equal(chooseStreams(surround).audio.itag, 140, 'stereo is preferred over a louder 5.1 track');
 });
 
 function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '' } = {}) {
