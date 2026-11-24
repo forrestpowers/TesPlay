@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
 import {
-  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, audioRank, relativeDate, clockDuration, rawTvPage, TV_SCOPES, SIGN_IN_REQUIRED,
+  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, audioRank, relativeDate, clockDuration, rawTvPage, TV_SCOPES, TV_PLAYER_CLIENT, SIGN_IN_REQUIRED,
 } from '../server/youtube-innertube.js';
 
 const NOW = Date.parse('2026-11-23T12:00:00Z');
@@ -104,7 +104,7 @@ test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 1
   assert.equal(chooseStreams(surround).audio.itag, 140, 'stereo is preferred over a louder 5.1 track');
 });
 
-function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '' } = {}) {
+function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '', sabr = null, sabrMode = 'auto' } = {}) {
   const connections = new Map([['c1', { id: 'c1', type: 'youtube', name: 'YouTube', config: { authMode: 'innertube', tvClientId: 'tv-client', tvClientSecret: 'tv-secret', ...config } }]]);
   const saved = [];
   const fetchCalls = [];
@@ -120,9 +120,10 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
   const createInnertube = async (options = {}) => {
     const events = {};
     const yt = { options,
-      session: { on: (name, fn) => { events[name] = fn; }, signIn: async tokens => { yt.session.oauth.oauth2_tokens = tokens; yt.session.logged_in = true; }, oauth: { oauth2_tokens: null, setTokens(t) { this.oauth2_tokens = t; }, getClientID: async () => ({ client_id: 'yt-tv-client.apps.googleusercontent.com', client_secret: 'yt-tv-secret' }) }, player: { id: 'p' }, logged_in: false },
+      session: { on: (name, fn) => { events[name] = fn; }, signIn: async tokens => { yt.session.oauth.oauth2_tokens = tokens; yt.session.logged_in = true; }, oauth: { oauth2_tokens: null, setTokens(t) { this.oauth2_tokens = t; }, getClientID: async () => ({ client_id: 'yt-tv-client.apps.googleusercontent.com', client_secret: 'yt-tv-secret' }) }, player: { id: 'p' }, logged_in: false, context: { client: { clientName: 'TVHTML5', clientVersion: '7.20260311.12.00' } } },
       calls: [], events,
-      getBasicInfo: async (id, options) => { yt.calls.push(['getBasicInfo', id, options.client]); return info(options.client, yt); },
+      // No client override means the request goes out as the session is: the TV client here.
+      getBasicInfo: async (id, options) => { yt.calls.push(['getBasicInfo', id, options.client]); return info(options.client || 'TV', yt); },
       browses: [],
       actions: { execute: async (endpoint, args) => {
         yt.browses.push({ endpoint, args });
@@ -147,7 +148,7 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
   };
   const service = createInnertubeService({
     getConnection: (_req, id) => connections.get(id), saveConfig: (_req, c, patch) => { saved.push(patch); const current = connections.get(c.id); current.config = { ...current.config, ...patch }; },
-    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n', potProviderUrl, maxHeight: 1080,
+    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n', potProviderUrl, maxHeight: 1080, sabr, sabrMode,
   });
   return { service, connections, saved, fetchCalls, created, req: { user: { id: 'owner' } } };
 }
@@ -313,7 +314,7 @@ test('browsing without a completed sign-in asks for it, and a revoked refresh to
   assert.equal(revoked.created.length, 0);
 });
 
-test('stream resolution prefers the signed-in TV client, falls back to anonymous visionOS with page visitor data, defers live videos and gives up on SABR-only data', async () => {
+test('stream resolution prefers the signed-in TV client at the older player version, falls back to anonymous visionOS with page visitor data, defers live videos and gives up on SABR-only data', async () => {
   const statuses = { TV: 'OK', VISIONOS: 'OK' };
   const infoFor = (client) => ({ playability_status: { status: statuses[client], reason: statuses[client] === 'OK' ? '' : 'Sign in to confirm you’re not a bot' }, basic_info: { title: 'Big Buck Bunny', is_live: false }, streaming_data: statuses[client] === 'OK' ? streaming() : undefined });
   const f = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: infoFor });
@@ -323,7 +324,9 @@ test('stream resolution prefers the signed-in TV client, falls back to anonymous
   assert.equal(resolved.video.url, 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=137&n=ok');
   assert.equal(resolved.audio.url, 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=140&n=ok');
   assert.equal(resolved.isLive, false);
-  assert.deepEqual(f.created[0].calls, [['getBasicInfo', 'aqz-KE-bpKQ', 'TV']]);
+  assert.deepEqual(f.created[0].calls, [['getBasicInfo', 'aqz-KE-bpKQ', undefined]], 'the player session is not overridden back to the current TV client');
+  assert.equal(f.created[0].options.client_type, 'TVHTML5');
+  assert.deepEqual(f.created[0].session.context.client, { clientName: 'TVHTML5', ...TV_PLAYER_CLIENT }, 'the player session declares the TV version that still returns plain URLs');
   statuses.TV = 'LOGIN_REQUIRED';
   const anonymous = await f.service.resolve(f.req, c, 'aqz-KE-bpKQ');
   assert.equal(anonymous.via, 'innertube-visionos');
@@ -348,6 +351,7 @@ test('stream resolution prefers the signed-in TV client, falls back to anonymous
   assert.deepEqual((await live.service.resolve(live.req, live.connections.get('c1'), 'aqz-KE-bpKQ')).isLive, true);
   const sabr = fixture({ info: () => { const data = streaming(); data.adaptive_formats.forEach(x => { delete x.url; }); return { playability_status: { status: 'OK' }, basic_info: {}, streaming_data: data }; } });
   assert.equal(await sabr.service.resolve(sabr.req, sabr.connections.get('c1'), 'aqz-KE-bpKQ'), null);
+  assert.equal(sabr.created.length, 1, 'without a SABR bridge the current TV client is never asked');
   const limited = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming() }), probe: async () => false });
   assert.equal(await limited.service.resolve(limited.req, limited.connections.get('c1'), 'aqz-KE-bpKQ'), null, 'URLs that refuse mid-file ranges are not handed to the player');
   const foreign = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: { adaptive_formats: [ { ...format(137, 'video/mp4; codecs="avc1"', { height: 720 }), decipher: async () => 'https://evil.example/video' }, format(140, 'audio/mp4; codecs="mp4a"') ] } }) });
@@ -393,4 +397,26 @@ test('routes serve InnerTube connections with proxied artwork and fall through t
   assert.equal((await data.request('/api/youtube/c1/home')).status, 409);
   assert.deepEqual(await (await data.request('/api/youtube/c1/search?q=x')).json(), { dataApi: true });
   assert.equal((await data.request('/api/youtube/c1/signin/start', { method: 'POST' })).status, 404);
+});
+
+test('when the older TV player client also gets SABR-only data, the current TV client opens a SABR session before anonymous clients are tried', async () => {
+  const opened = [];
+  const bridge = { open: async (key, run) => { opened.push({ key, run }); return { video: 'video-spool', audio: 'audio-spool' }; } };
+  const sabrOnly = () => { const data = streaming(); data.adaptive_formats.forEach(x => { delete x.url; }); data.server_abr_streaming_url = 'https://rr1---sn-test.googlevideo.com/videoplayback?sabr=1'; return data; };
+  const infoFor = client => client === 'TV' ? { playability_status: { status: 'OK' }, basic_info: { title: 'Adaptive only' }, streaming_data: sabrOnly(), player_config: {} } : { playability_status: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm you’re not a bot' }, basic_info: {} };
+  const f = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: infoFor, sabr: bridge });
+  const resolved = await f.service.resolve(f.req, f.connections.get('c1'), 'aqz-KE-bpKQ');
+  assert.equal(resolved.via, 'innertube-sabr');
+  assert.deepEqual(resolved.video, { spool: 'video-spool' });
+  assert.deepEqual(opened.map(o => o.key), ['c1:aqz-KE-bpKQ:1080']);
+  assert.deepEqual(f.created.map(yt => yt.calls), [[['getBasicInfo', 'aqz-KE-bpKQ', undefined]], [['getBasicInfo', 'aqz-KE-bpKQ', 'TV']], [['getBasicInfo', 'aqz-KE-bpKQ', 'VISIONOS']], [['getBasicInfo', 'aqz-KE-bpKQ', 'VISIONOS']]], 'player session, then the current TV client for SABR, then visionOS (rebuilt once with fresh visitor data)');
+  assert.equal(f.created[1].session.context.client.clientVersion, '7.20260311.12.00', 'the SABR session keeps the current TV client');
+  // With YOUTUBE_SABR=prefer the SABR session opens as soon as the plain TV path fails, before any anonymous client.
+  const preferred = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: infoFor, sabr: bridge, sabrMode: 'prefer' });
+  assert.equal((await preferred.service.resolve(preferred.req, preferred.connections.get('c1'), 'aqz-KE-bpKQ')).via, 'innertube-sabr');
+  assert.equal(preferred.created.length, 2, 'no anonymous client was created');
+  // Plain URLs from the older TV client still win over SABR whatever the mode.
+  const plain = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming() }), sabr: bridge, sabrMode: 'prefer' });
+  assert.equal((await plain.service.resolve(plain.req, plain.connections.get('c1'), 'aqz-KE-bpKQ')).via, 'innertube-tv');
+  assert.equal(plain.created.length, 1);
 });

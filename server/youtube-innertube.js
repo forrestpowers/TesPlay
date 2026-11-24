@@ -23,6 +23,9 @@ const YT_REVOKE_URL = 'https://www.youtube.com/o/oauth2/revoke';
 // Bearer token. Google rejects it for some custom clients; the Data API scope is
 // the documented alternative for a TV-type client.
 export const TV_SCOPES = ['http://gdata.youtube.com https://www.googleapis.com/auth/youtube-paid-content', 'https://www.googleapis.com/auth/youtube'];
+// The TV client version YouTube still answers with plain stream URLs when signed in. Current TV
+// versions (7.x) get server-ABR-only streaming data; yt-dlp calls this older one "tv_downgraded".
+export const TV_PLAYER_CLIENT = { clientVersion: '5.20260707', userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version' };
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/, CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/, PLAYLIST_ID = /^(?:WL|LL|[A-Za-z0-9_-]{10,100})$/; // WL = Watch later, LL = Liked videos
 const SHORT_TYPES = new Set(['ReelItem', 'ShortsLockupView']);
 const text = value => plainText(value == null ? '' : typeof value === 'string' ? value : typeof value.text === 'string' ? value.text : typeof value.toString === 'function' ? value.toString() : '').trim();
@@ -223,7 +226,7 @@ export function createInnertubeService({
   sabr = null, sabrMode = env.YOUTUBE_SABR || 'auto',
 } = {}) {
   const pending = new Map(); // connectionId -> device authorization in progress
-  const clients = new Map(); // connectionId -> { key, promise }
+  const clients = new Map(); // `${connectionId}:${role}` -> { key, promise }; roles: browse (current TV client), player (TV_PLAYER_CLIENT)
   const pages = new Map(); // continuation token -> { feed, userId, connectionId, expires, map }
   let anonymous = null, anonymousExpires = 0, library = null;
   // A client the user created in Google Cloud wins; otherwise YouTube's own TV-app client, read
@@ -321,7 +324,7 @@ export function createInnertubeService({
     }
     pending.delete(c.id);
     if (!data.refresh_token) throw providerError('Google did not return a refresh token. Remove TesPlay from your Google account permissions and sign in again.', 502);
-    clients.delete(c.id);
+    forgetClients(c.id);
     saveConfig(req, c, {
       authMode: 'innertube', tvAccessToken: data.access_token, tvRefreshToken: data.refresh_token, tvExpiresAt: now() + Number(data.expires_in || 3600) * 1000, tvScope: entry.scope,
       // Tokens belong to the client that issued them; keep YouTube's client beside them for refreshes.
@@ -332,7 +335,7 @@ export function createInnertubeService({
   function cancelSignIn(req, c) { const entry = pending.get(c.id); if (entry && entry.userId === req.user.id) pending.delete(c.id); }
   async function signOut(req, c) {
     if (c.shared) throw providerError('Only the connection owner can sign out of this shared connection.', 403);
-    cancelSignIn(req, c); clients.delete(c.id);
+    cancelSignIn(req, c); forgetClients(c.id);
     const token = c.config.tvRefreshToken || c.config.tvAccessToken;
     if (token) { try { await fetchImpl(`${endpoints(savedBuiltin(c) && !customClient(c) ? 'youtube' : 'custom').revoke}?token=${encodeURIComponent(token)}`, { method: 'POST', signal: AbortSignal.timeout(10000) }); } catch { /* Local sign-out still proceeds. */ } }
     saveConfig(req, c, { tvAccessToken: null, tvRefreshToken: null, tvExpiresAt: 0, tvBuiltinClientId: null, tvBuiltinClientSecret: null });
@@ -362,14 +365,22 @@ export function createInnertubeService({
     try { return await flight; } finally { if (refreshes.get(key) === flight) refreshes.delete(key); }
   }
   const tokenSet = t => ({ access_token: t.accessToken, refresh_token: t.refreshToken, expiry_date: new Date(t.expiresAt).toISOString(), client: { client_id: t.client.clientId, client_secret: t.client.clientSecret } });
-  async function signedClient(req, c) {
+  const forgetClients = id => { for (const key of clients.keys()) if (key.startsWith(`${id}:`)) clients.delete(key); };
+  /**
+   * A signed-in TV client for the connection. The `browse` role is the current TV client (feeds
+   * come back as tiles); the `player` role declares the older TV version whose player responses
+   * still carry plain stream URLs, so a video plays by byte range without SABR.
+   */
+  async function signedClient(req, c, role = 'browse') {
     const token = await accessToken(req, c);
     const key = createHash('sha256').update(`${token.refreshToken}:${token.client.clientId}`).digest('hex');
-    let entry = clients.get(c.id);
+    const slot = `${c.id}:${role}`;
+    let entry = clients.get(slot);
     if (!entry || entry.key !== key) {
       const promise = (async () => {
         // YouTube only honours the TV app's tokens on InnerTube requests made as the TV client.
         const yt = await build({ client_type: 'TVHTML5' });
+        if (role === 'player') Object.assign(yt.session.context.client, TV_PLAYER_CLIENT);
         yt.session.on?.('update-credentials', ({ credentials }) => {
           if (credentials?.access_token) { try { saveConfig(req, c, { tvAccessToken: credentials.access_token, tvExpiresAt: Date.parse(credentials.expiry_date) || now() + 3600000 }); } catch (error) { log.warn?.('YouTube token save failed', error.message); } }
         });
@@ -378,8 +389,8 @@ export function createInnertubeService({
         return yt;
       })();
       entry = { key, promise };
-      clients.set(c.id, entry);
-      promise.catch(() => { if (clients.get(c.id) === entry) clients.delete(c.id); });
+      clients.set(slot, entry);
+      promise.catch(() => { if (clients.get(slot) === entry) clients.delete(slot); });
     }
     const yt = await entry.promise;
     if (yt.session.oauth?.oauth2_tokens && yt.session.oauth.oauth2_tokens.access_token !== token.accessToken) yt.session.oauth.setTokens(tokenSet(token));
@@ -551,28 +562,33 @@ export function createInnertubeService({
     if (!VIDEO_ID.test(String(videoId))) throw providerError('Enter a valid YouTube video ID.', 400);
     let sabrCandidate = null;
     const attempts = [];
-    if (c && innertubeSignedIn(c)) attempts.push({ client: 'TV', open: () => signedClient(req, c) });
+    if (c && innertubeSignedIn(c)) {
+      // The player-role session already declares the older TV client, so the request goes out
+      // as the session is; naming `client: 'TV'` would put the current version back.
+      attempts.push({ client: 'TV', via: 'innertube-tv', open: () => signedClient(req, c, 'player'), options: {} });
+      if (sabr && sabrMode !== 'off') attempts.push({ client: 'TV', via: 'innertube-tv-sabr', open: () => signedClient(req, c), options: { client: 'TV' } });
+    }
     // visionOS is the one anonymous client that still hands out plain URLs; with a proof-of-origin
     // token (when a provider is configured) its player request and stream URLs carry the token.
-    attempts.push({ client: 'VISIONOS', open: () => anonymousClient(), renew: () => anonymousClient(true) });
+    attempts.push({ client: 'VISIONOS', via: 'innertube-visionos', open: () => anonymousClient(), renew: () => anonymousClient(true), options: { client: 'VISIONOS' } });
     let lastReason = '';
     for (const attempt of attempts) {
       if (signal?.aborted) throw signal.reason;
       try {
         let yt = await attempt.open();
-        let info = await timed(yt.getBasicInfo(videoId, { client: attempt.client }));
+        let info = await timed(yt.getBasicInfo(videoId, attempt.options));
         let status = info.playability_status?.status;
         if (status === 'LOGIN_REQUIRED' && attempt.renew) {
           // Stale visitor data trips the bot check; mint fresh visitor data once and retry.
           yt = await attempt.renew();
-          info = await timed(yt.getBasicInfo(videoId, { client: attempt.client }));
+          info = await timed(yt.getBasicInfo(videoId, attempt.options));
           status = info.playability_status?.status;
         }
         if (info.basic_info?.is_live || info.basic_info?.is_upcoming) return { isLive: true, info: info.basic_info };
         if (status && status !== 'OK') { lastReason = `${attempt.client}: ${status} ${info.playability_status?.reason || ''}`.trim(); continue; }
         const chosen = chooseStreams(info.streaming_data, { maxHeight });
         if (!chosen) {
-          if (attempt.client === 'TV' && sabr && sabrMode !== 'off' && info.streaming_data?.server_abr_streaming_url) {
+          if (attempt.via === 'innertube-tv-sabr' && info.streaming_data?.server_abr_streaming_url) {
             sabrCandidate = { yt, info };
             if (sabrMode === 'prefer') break;
           }
@@ -588,7 +604,7 @@ export function createInnertubeService({
         // Read a slice from the middle of each file before handing the URLs to the player.
         const usable = (await Promise.all([video, audio].map(stream => probe(stream.url, chosen.video === stream ? chosen.video.content_length : chosen.audio.content_length)))).every(Boolean);
         if (!usable) { lastReason = `${attempt.client}: videoplayback refused a mid-file range (proof-of-origin token required)`; continue; }
-        return { video, audio, isLive: false, via: `innertube-${attempt.client.toLowerCase()}`, title: text(info.basic_info?.title) };
+        return { video, audio, isLive: false, via: attempt.via, title: text(info.basic_info?.title) };
       } catch (error) {
         if (signal?.aborted) throw signal.reason;
         if (error?.status === 409 && attempt.client === 'TV') { lastReason = 'TV: not signed in'; continue; }
