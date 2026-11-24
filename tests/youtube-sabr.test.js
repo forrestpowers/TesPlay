@@ -135,6 +135,11 @@ test('the bridge shares one session per key, restarts the stream where a reader 
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.deepEqual(launches, [0, 5500]);
   assert.ok((await far).equals(video.fragments[3]));
+  // After serving the end, a need near the start restarts there instead of counting as "about to arrive".
+  const early = collect(session.video.read(undefined, session.video.layout.offsets[1], session.video.layout.offsets[2] - 1));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(launches, [0, 5500, 2000]);
+  assert.ok((await early).equals(video.fragments[1]));
   const again = await bridge.open('c1:vid:1080', run);
   assert.equal(again, session, 'the same session serves a second reader');
   const failing = await bridge.open('c1:bad:1080', async () => { throw new Error('no formats'); });

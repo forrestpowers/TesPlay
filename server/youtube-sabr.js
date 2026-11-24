@@ -212,6 +212,8 @@ export function createSabrBridge({ cacheDir, log = console, now = Date.now, maxS
       session.restarting = (async () => {
         try {
           await session.current?.abort?.();
+          // Progress is measured from this start; what earlier streams wrote stays in `present`.
+          session.video.lastIngested = -1; session.audio.lastIngested = -1;
           session.current = await session.launch(timeMs);
           session.current.startTimeMs = timeMs;
           log.info?.(`YouTube SABR session ${session.id}: ${why}, stream restarted at ${(timeMs / 1000).toFixed(1)} s.`);
