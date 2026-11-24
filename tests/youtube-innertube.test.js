@@ -56,6 +56,8 @@ test('item mappers read youtubei.js nodes into MediaItem shapes and reject malfo
 test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 140 and refuses DRM or SABR-only data', () => {
   const chosen = chooseStreams(streaming());
   assert.equal(chosen.video.itag, 137); assert.equal(chosen.video.height, 1080); assert.equal(chosen.audio.itag, 140);
+  const sixty = streaming(); sixty.adaptive_formats.push(format(299, 'video/mp4; codecs="avc1.64002a"', { height: 1080, fps: 60, bitrate: 299000 }));
+  assert.equal(chooseStreams(sixty).video.itag, 137, '30 fps is preferred over 60 fps at the same height');
   assert.equal(chooseStreams(streaming(), { maxHeight: 720 }).video.itag, 136);
   const sabr = streaming(); sabr.adaptive_formats.forEach(f => { delete f.url; });
   assert.equal(chooseStreams(sabr), null);

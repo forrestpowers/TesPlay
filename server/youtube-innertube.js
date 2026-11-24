@@ -157,8 +157,10 @@ export function rawTvPage(data) {
 /** Choose a progressive H.264 video stream at or below the ceiling plus an AAC audio stream. */
 export function chooseStreams(streamingData, { maxHeight = 1080 } = {}) {
   const formats = [...(streamingData?.adaptive_formats || []), ...(streamingData?.formats || [])].filter(f => f && typeof f.mime_type === 'string' && !f.drm_families?.length && !f.is_type_otf);
+  // Like the YouTube TV app on a car screen: the tallest H.264 track at or below the ceiling,
+  // preferring 30 fps over 60 fps (half the decode work on the Tesla's MCU for the same picture).
   const videos = formats.filter(f => f.has_video && !f.has_audio && /avc1/i.test(f.mime_type) && (f.height || 0) <= maxHeight && (f.url || f.signature_cipher || f.cipher))
-    .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.fps || 0) - (a.fps || 0) || (b.bitrate || 0) - (a.bitrate || 0));
+    .sort((a, b) => (b.height || 0) - (a.height || 0) || Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.bitrate || 0) - (a.bitrate || 0));
   // Videos with dubs carry several AAC tracks; the original language comes first, then the
   // track YouTube marks default, never auto-dubbed, described or DRC variants.
   const audios = formats.filter(f => f.has_audio && !f.has_video && /mp4a/i.test(f.mime_type) && (f.url || f.signature_cipher || f.cipher) && !f.is_descriptive && !f.is_auto_dubbed && (f.audio_channels || 2) <= 2)
@@ -524,7 +526,7 @@ export function createInnertubeService({
       stream.on('formatInitialization', track => log.info?.(`YouTube SABR ${videoId}: server sends itag ${track.formatId?.itag} ${track.mimeType || ''}`));
       stream.on('streamProtectionStatusUpdate', status => { if (status?.status && status.status !== 1) log.warn?.(`YouTube SABR ${videoId}: stream protection status ${status.status} (a proof-of-origin token may be required).`); });
       session.abortStream = () => stream.abort();
-      const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || '') && (f.height || 0) <= maxHeight).sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || '') && (f.height || 0) <= maxHeight).sort((a, b) => (b.height || 0) - (a.height || 0) || Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.bitrate || 0) - (a.bitrate || 0))[0];
       const aac = formats => formats.filter(f => f.hasAudio && /mp4a/i.test(f.mimeType || '') && (f.numChannels || 2) <= 2 && !f.isDescriptive && !f.isAutoDubbed)
         .sort((a, b) => audioRank(a) - audioRank(b) || processed(a) - processed(b) || (b.bitrate || 0) - (a.bitrate || 0))[0];
       const { videoStream, audioStream, selectedFormats } = stream.start({ videoFormat: h264, audioFormat: aac, enabledTrackTypes: EnabledTrackTypes.VIDEO_AND_AUDIO, isPostLiveDvr: false });
