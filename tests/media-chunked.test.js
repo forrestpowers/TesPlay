@@ -27,7 +27,7 @@ async function upstream(size, limit = 1024 * 1024) {
   return { body, log, url: 'http://203.0.113.20/videoplayback', close: () => { http.request = original; return new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }); } };
 }
 
-async function proxy(t, remote) {
+async function proxy(t, remote, extra = {}) {
   const app = express();
   app.use((req, _res, next) => { req.user = { id: 'owner' }; next(); });
   const media = createMediaService({ getProfileId: () => 'p1', getConnection: () => null });
@@ -37,8 +37,8 @@ async function proxy(t, remote) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const path = media.register({ user: { id: 'owner' } }, null, { url: remote.url, headers: {}, kind: 'video', chunkBytes: 1024 * 1024 });
-  return { fetch: (range, init = {}) => fetch(base + path, { ...init, headers: { ...(range ? { Range: range } : {}), ...init.headers } }) };
+  const path = media.register({ user: { id: 'owner' } }, null, { url: remote.url, headers: {}, kind: 'video', chunkBytes: 1024 * 1024, ...extra });
+  return { path, fetch: (range, init = {}) => fetch(base + path, { ...init, headers: { ...(range ? { Range: range } : {}), ...init.headers } }) };
 }
 
 test('chunked proxy serves open-ended and large ranges through bounded upstream range requests', async t => {
@@ -78,4 +78,34 @@ test('chunked proxy reports an upstream refusal as a gateway error before any by
   const response = await p.fetch('bytes=0-');
   assert.equal(response.status, 502);
   assert.match((await response.json()).error, /HTTP 403/);
+});
+
+test('the opening bytes are fetched when the link is handed out and served from memory, then the rest is read upstream', async t => {
+  const remote = await upstream(2.5 * 1024 * 1024);
+  t.after(remote.close);
+  const p = await proxy(t, remote, { prefetchBytes: 256 * 1024 });
+  // The prefetch starts at registration, before the player asks for anything.
+  for (let i = 0; i < 50 && !remote.log.length; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(remote.log, ['bytes=0-262143']);
+  const open = await p.fetch('bytes=0-');
+  assert.equal(open.status, 206);
+  assert.equal(open.headers.get('content-range'), `bytes 0-${remote.body.length - 1}/${remote.body.length}`);
+  assert.ok(Buffer.from(await open.arrayBuffer()).equals(remote.body));
+  assert.deepEqual(remote.log, ['bytes=0-262143', 'bytes=262144-1310719', 'bytes=1310720-2359295', 'bytes=2359296-2621439']);
+  remote.log.length = 0;
+  const header = await p.fetch('bytes=100-1099');
+  assert.ok(Buffer.from(await header.arrayBuffer()).equals(remote.body.subarray(100, 1100)));
+  assert.deepEqual(remote.log, [], 'a read inside the opening bytes needs no upstream request');
+  const later = await p.fetch('bytes=2000000-2000099');
+  assert.ok(Buffer.from(await later.arrayBuffer()).equals(remote.body.subarray(2000000, 2000100)));
+  assert.deepEqual(remote.log, ['bytes=2000000-2000099']);
+});
+
+test('a refused link reports itself so remembered stream URLs are dropped', async t => {
+  const remote = await upstream(512 * 1024, 1024);
+  t.after(remote.close);
+  let refused = 0;
+  const p = await proxy(t, remote, { prefetchBytes: 128 * 1024, onRefused: () => { refused++; } });
+  assert.equal((await p.fetch('bytes=0-')).status, 502);
+  assert.equal(refused, 2, 'both the prefetch and the read saw HTTP 403');
 });

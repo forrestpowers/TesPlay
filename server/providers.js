@@ -559,17 +559,18 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       return { url: track("video"), audioUrl: track("audio"), type: "video", isLive: true, streamKind: "growing-fmp4", provider: "youtube", via: resolved.via };
     }
     if (!resolved?.video) resolved = await resolveYouTube(videoId, controller.signal);
-    const register = (resource) => media.register(req, c, resource.spool
+    const register = (resource, prefetchBytes) => media.register(req, c, resource.spool
       // A SABR track spooled on the server: served by byte range as it downloads.
       ? { kind: "video", spool: resource.spool, contentType: "video/mp4", touch: () => resolved.sabr?.touch?.() }
       : {
         url: resource.url, headers: resource.headers, kind: resource.hls ? "hls" : "video",
         // googlevideo refuses open-ended and multi-megabyte ranges; the proxy re-chunks them.
-        ...(resolved.via && !resource.hls ? { chunkBytes: 4 * 1024 * 1024 } : {}),
+        // The opening bytes are fetched right away, while this answer travels to the player.
+        ...(resolved.via && !resource.hls ? { chunkBytes: 4 * 1024 * 1024, prefetchBytes, onRefused: () => innertube?.forget?.(c, videoId) } : {}),
       });
     return {
-      url: register(resolved.video),
-      ...(resolved.audio ? { audioUrl: register(resolved.audio) } : {}),
+      url: register(resolved.video, 2 * 1024 * 1024),
+      ...(resolved.audio ? { audioUrl: register(resolved.audio, 512 * 1024) } : {}),
       type: resolved.video.hls ? "hls" : "video",
       isLive: resolved.isLive,
       streamKind: resolved.audio ? "dual-input" : "direct-file",

@@ -13,9 +13,12 @@ export function playbackPath(item: MediaItem, settings: PlaybackSettings = {}) {
   return `/playback?${params}`;
 }
 export async function resolvePlayback(item: MediaItem, settings: PlaybackSettings, signal: AbortSignal, defaults?: PlayerPreferences): Promise<Playback> {
-  const preferences = defaults || await api<PlayerPreferences>('/player/preferences',undefined,undefined,signal).catch(() => { signal.throwIfAborted(); return defaultPlayerPreferences; });
+  // Ask for the preferences alongside the stream rather than one round trip before it.
+  const preferencesRequest = defaults ? Promise.resolve(defaults) : api<PlayerPreferences>('/player/preferences',undefined,undefined,signal).catch(() => { signal.throwIfAborted(); return defaultPlayerPreferences; });
+  preferencesRequest.catch(() => {});
   const effective = { ...settings };
   if (item.providerType === 'plex' && !item.playbackUrl) {
+    const preferences = await preferencesRequest;
     if (effective.qualityId === undefined) effective.qualityId = item.type === 'audio' ? 'auto' : preferences.qualityId;
     if (effective.audioTrackId === undefined && preferences.audioLanguage) {
       const options = await api<PlaybackOptions>(`/playback/options?${new URLSearchParams({connectionId:item.connectionId || '',itemId:item.id,kind:item.type})}`,undefined,undefined,signal).catch(() => { signal.throwIfAborted(); return {audio:[]}; });
@@ -29,7 +32,7 @@ export async function resolvePlayback(item: MediaItem, settings: PlaybackSetting
     const resolver = /^\/api\/remote\/media\/remote-[a-f0-9-]+\/playback$/.test(item.playbackUrl) ? item.playbackUrl.slice(4) : item.playbackUrl.startsWith('/api/radio/stream/') ? item.playbackUrl.slice(4).replace('/radio/stream/','/radio/playback/') : id ? `/youtube/resolve/${id}` : item.playbackUrl.startsWith('/api/youtube/resolve/') ? item.playbackUrl.slice(4) : null;
     playback = resolver ? await api<Playback>(resolver,undefined,undefined,signal) : {url:item.playbackUrl,type:item.type==='audio'?'audio':/\.m3u8(?:[?#]|$)/i.test(item.playbackUrl)?'hls':'video',...(/\.ts(?:[?#]|$)/i.test(item.playbackUrl)?{streamKind:'continuous-ts' as const}:{})};
   }
-  return {...playback,settings:effective,defaults:preferences};
+  return {...playback,settings:effective,defaults:await preferencesRequest};
 }
 const base64Url = (bytes:Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function representation(response:Response, proxied:boolean):Promise<string|null> {

@@ -327,6 +327,9 @@ test('stream resolution prefers the signed-in TV client at the older player vers
   assert.deepEqual(f.created[0].calls, [['getBasicInfo', 'aqz-KE-bpKQ', undefined]], 'the player session is not overridden back to the current TV client');
   assert.equal(f.created[0].options.client_type, 'TVHTML5');
   assert.deepEqual(f.created[0].session.context.client, { clientName: 'TVHTML5', ...TV_PLAYER_CLIENT }, 'the player session declares the TV version that still returns plain URLs');
+  assert.equal(await f.service.resolve(f.req, c, 'aqz-KE-bpKQ'), resolved, 'reopening the video reuses its stream URLs');
+  assert.equal(f.created[0].calls.length, 1, 'without asking YouTube again');
+  f.service.forget(c, 'aqz-KE-bpKQ');
   statuses.TV = 'LOGIN_REQUIRED';
   const anonymous = await f.service.resolve(f.req, c, 'aqz-KE-bpKQ');
   assert.equal(anonymous.via, 'innertube-visionos');
@@ -345,6 +348,7 @@ test('stream resolution prefers the signed-in TV client at the older player vers
   assert.equal(retried.via, 'innertube-visionos');
   assert.deepEqual(seen, ['visitor-1', 'visitor-2']);
   statuses.VISIONOS = 'UNPLAYABLE';
+  f.service.forget(c, 'aqz-KE-bpKQ');
   assert.equal(await f.service.resolve(f.req, c, 'aqz-KE-bpKQ'), null);
   await assert.rejects(f.service.resolve(f.req, c, 'nope'), { status: 400 });
   const live = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: { is_live: true }, streaming_data: streaming() }) });
@@ -352,8 +356,12 @@ test('stream resolution prefers the signed-in TV client at the older player vers
   const sabr = fixture({ info: () => { const data = streaming(); data.adaptive_formats.forEach(x => { delete x.url; }); return { playability_status: { status: 'OK' }, basic_info: {}, streaming_data: data }; } });
   assert.equal(await sabr.service.resolve(sabr.req, sabr.connections.get('c1'), 'aqz-KE-bpKQ'), null);
   assert.equal(sabr.created.length, 1, 'without a SABR bridge the current TV client is never asked');
-  const limited = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming() }), probe: async () => false });
-  assert.equal(await limited.service.resolve(limited.req, limited.connections.get('c1'), 'aqz-KE-bpKQ'), null, 'URLs that refuse mid-file ranges are not handed to the player');
+  const probed = [];
+  const limited = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming() }), probe: async url => { probed.push(url); return false; } });
+  assert.equal((await limited.service.resolve(limited.req, limited.connections.get('c1'), 'aqz-KE-bpKQ')).via, 'innertube-tv', 'signed-in TV URLs serve any range and are not checked first');
+  assert.deepEqual(probed, []);
+  assert.equal(await limited.service.resolve(limited.req, { id: 'c2', type: 'youtube', config: {} }, 'aqz-KE-bpKQ'), null, 'anonymous URLs that refuse mid-file ranges are not handed to the player');
+  assert.equal(probed.length, 2);
   const foreign = fixture({ info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: { adaptive_formats: [ { ...format(137, 'video/mp4; codecs="avc1"', { height: 720 }), decipher: async () => 'https://evil.example/video' }, format(140, 'audio/mp4; codecs="mp4a"') ] } }) });
   assert.equal(await foreign.service.resolve(foreign.req, foreign.connections.get('c1'), 'aqz-KE-bpKQ'), null);
 });

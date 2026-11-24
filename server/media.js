@@ -367,6 +367,7 @@ export function createMediaService(ctx) {
     // Keep playback tickets separate from the reserved a_ artwork descriptors.
     const id = `m_${randomBytes(24).toString("base64url")}`;
     resources.set(id, record);
+    if (record.prefetchBytes && record.chunkBytes && record.url) record.head = prefetchHead(record);
     return `/api/media/${id}`;
   }
   function authorizedResource(req) {
@@ -740,6 +741,44 @@ export function createMediaService(ctx) {
       res.destroy(error);
     }
   }
+  const MEDIA_TYPE = /^(?:video\/|audio\/|application\/(?:octet-stream|mp4)(?:;|$))/i;
+  /**
+   * Fetch the first bytes of a chunked resource as soon as it is registered. The player asks for
+   * them a round trip later (the playback answer travels to the browser, the engine starts up);
+   * by then they are in memory and the pooled connection to the media host is already open.
+   */
+  function prefetchHead(item) {
+    const bytes = Math.max(64 * 1024, Number(item.prefetchBytes));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    timer.unref?.();
+    const promise = (async () => {
+      const upstream = await requestRemote(item.url, {
+        headers: { ...item.headers, Range: `bytes=0-${bytes - 1}` }, allowedPrivateHosts: item.allowedPrivateHosts,
+        timeout: 20000, signal: controller.signal,
+      });
+      const match = /^bytes 0-(\d+)\/(\d+)$/.exec(String(upstream.headers["content-range"] || ""));
+      const contentType = String(upstream.headers["content-type"] || "");
+      if (upstream.statusCode !== 206 || !match || !MEDIA_TYPE.test(contentType)) {
+        upstream.resume();
+        if (upstream.statusCode === 403) item.onRefused?.();
+        return null;
+      }
+      const parts = [];
+      let size = 0;
+      for await (const chunk of upstream) {
+        size += chunk.length;
+        if (size > bytes) { upstream.destroy(); return null; }
+        parts.push(chunk);
+      }
+      const data = Buffer.concat(parts);
+      if (data.length !== Number(match[1]) + 1) return null;
+      return { data, total: Number(match[2]), contentType, etag: upstream.headers.etag || "", lastModified: upstream.headers["last-modified"] || "" };
+    })().catch(() => null).finally(() => clearTimeout(timer));
+    // Only the opening reads need it; do not hold media in memory for the life of the link.
+    setTimeout(() => { if (item.head === promise) item.head = null; }, 120000).unref?.();
+    return promise;
+  }
   /**
    * Serve one client range as a sequence of bounded upstream range requests.
    * YouTube's videoplayback hosts refuse open-ended or multi-megabyte ranges,
@@ -754,6 +793,25 @@ export function createMediaService(ctx) {
     let total = item.size;
     let position = start;
     let written = false;
+    const begin = (contentType, etag, lastModified) => {
+      const end = Math.min(requestedEnd ?? total - 1, total - 1);
+      res.setHeader('X-Csp-Representation-Id', 'mr1_' + createHash('sha256').update(`tesplay-proxy-v1\0${req.params.token}\0${item.url}\0${total}\0${etag || ''}\0${lastModified || ''}`).digest('base64url'));
+      res.status(206).set({ "Content-Type": contentType, "Accept-Ranges": "bytes", "Content-Range": `bytes ${start}-${end}/${total}`, "Content-Length": String(end - start + 1) });
+      if (req.method === "HEAD") { res.end(); return false; }
+      written = true;
+      return true;
+    };
+    const head = item.head ? await item.head : null;
+    if (head && start < head.data.length) {
+      total = head.total;
+      item.size = total;
+      if (start >= total) return res.status(416).set("Content-Range", `bytes */${total}`).end();
+      if (!begin(head.contentType, head.etag, head.lastModified)) return;
+      const last = Math.min(requestedEnd ?? total - 1, total - 1, head.data.length - 1);
+      if (!res.write(head.data.subarray(start, last + 1))) await new Promise(resolve => res.once("drain", resolve));
+      position = last + 1;
+      if (position > Math.min(requestedEnd ?? total - 1, total - 1)) return res.end();
+    }
     const fetchChunk = async (from, to) => requestRemote(item.url, {
       headers: { ...headers, Range: `bytes=${from}-${to}` }, allowedPrivateHosts: item.allowedPrivateHosts,
       timeout: 45000, signal: controller.signal,
@@ -771,6 +829,7 @@ export function createMediaService(ctx) {
       const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(upstream.headers["content-range"] || ""));
       if (upstream.statusCode !== 206 || !match) {
         upstream.resume();
+        if (upstream.statusCode === 403) item.onRefused?.();
         if (written) { res.destroy(); return; }
         if (upstream.statusCode === 416) return res.status(416).set("Content-Range", `bytes */${total || "*"}`).end();
         return res.status(502).json({ error: `Media provider returned HTTP ${upstream.statusCode}.` });
@@ -779,16 +838,12 @@ export function createMediaService(ctx) {
       item.size = total;
       const chunkEnd = Number(match[2]);
       if (!written) {
-        const end = Math.min(requestedEnd ?? total - 1, total - 1);
         const contentType = String(upstream.headers["content-type"] || "application/octet-stream");
-        if (!/^(?:video\/|audio\/|application\/(?:octet-stream|mp4)(?:;|$))/i.test(contentType)) {
+        if (!MEDIA_TYPE.test(contentType)) {
           upstream.destroy();
           throw providerError("The provider returned an unsupported media response.", 502);
         }
-        res.setHeader('X-Csp-Representation-Id', 'mr1_' + createHash('sha256').update(`tesplay-proxy-v1\0${req.params.token}\0${item.url}\0${total}\0${upstream.headers.etag || ''}\0${upstream.headers['last-modified'] || ''}`).digest('base64url'));
-        res.status(206).set({ "Content-Type": contentType, "Accept-Ranges": "bytes", "Content-Range": `bytes ${start}-${end}/${total}`, "Content-Length": String(end - start + 1) });
-        if (req.method === "HEAD") { upstream.destroy(); return res.end(); }
-        written = true;
+        if (!begin(contentType, upstream.headers.etag, upstream.headers['last-modified'])) { upstream.destroy(); return; }
       }
       const onAbort = () => upstream.destroy();
       controller.signal.addEventListener("abort", onAbort, { once: true });

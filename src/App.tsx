@@ -47,7 +47,8 @@ import Navigation from './Navigation';
 const RearScreen=lazy(()=>import("./RearScreen"));
 const StremioSourcesDialog = lazy(() => import("./StremioSourcesDialog"));
 const MediaDetails = lazy(() => import("./MediaDetails"));
-const Player = lazy(() => import("./Player"));
+const loadPlayer = () => import("./Player");
+const Player = lazy(loadPlayer);
 const YouTubeHub = lazy(() => import("./YouTube"));
 const Home = lazy(() => import("./Home"));
 const LibraryBrowser = lazy(() => import("./LibraryBrowser"));
@@ -134,6 +135,15 @@ export default function App() {
   useEffect(()=>()=>seriesOpenRequest.current?.abort(),[auth?.activeProfileId]);
   const remoteSnapshot = useRef<{key:string;state:RemotePlayback}|null>(null);
   const remoteMode=!rearScreen&&(auth?.scope==='remote'||auth?.deviceMode==='remote'||view==='remote');
+  useEffect(()=>{
+    if(!auth?.user||remoteMode)return;
+    // The player is the largest part of the app. Fetch it while the home screen sits idle so the
+    // first tap on a title does not also wait for the player code to download.
+    const idle=(window as Window&{requestIdleCallback?:(callback:()=>void,options?:{timeout:number})=>number}).requestIdleCallback;
+    const load=()=>void loadPlayer().catch(()=>{});
+    const timer=window.setTimeout(()=>idle?idle(load,{timeout:5000}):load(),1500);
+    return ()=>window.clearTimeout(timer);
+  },[auth?.user,remoteMode]);
   // QR sessions already carry their target. Identity resets must not erase it.
   const activeRemoteRoom=remoteMode ? auth?.remoteRoomId || controllerRoom : controllerRoom;
   const bootRequest=useRef<Promise<Auth>|null>(null);

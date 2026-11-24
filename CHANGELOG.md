@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Faster starts: signed-in YouTube links are no longer test-read before playback, the first bytes of each track are fetched while the answer travels to the player, resolved links are reused for up to 30 minutes, and the signed-in player client is prepared when the YouTube tab opens. The app's scripts and styles are served compressed (brotli or gzip) with year-long caching, the player code loads in the background after sign-in, and player preferences are requested alongside the stream instead of before it.
 - YouTube **Sign in on this screen**: Google's TV device-code flow (enter a short code at google.com/device on your phone) signs the server in to YouTube's InnerTube API through `youtubei.js`. The YouTube hub gains a real **Home** tab, newest uploads from all subscriptions, account watch history, quota-free search, channel and playlist browsing. Works out of the box with YouTube's own TV-app client; your own Google OAuth client of type “TVs and Limited Input devices” is optional (per connection or `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET`).
 - YouTube connects only by signing in with your phone: the Data API key, web OAuth client and custom TV OAuth client options are gone from the app. Older Data API connections keep working until edited; `GOOGLE_TV_CLIENT_ID` still works for server owners.
 - Adding YouTube from Connections opens the full-screen phone sign-in (code plus QR for google.com/device) instead of the connection form, and a connection left half-way through sign-in is reused.

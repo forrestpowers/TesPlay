@@ -1,5 +1,6 @@
 import express from "express";
 import {retainUiAssets} from "./ui-assets.js";
+import { compressedAssets } from "./compressed-assets.js";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
@@ -268,11 +269,13 @@ export async function createApp(options = {}) {
       res.type("html").send(production ? shell.replace(/<script\b/g, `<script nonce="${res.locals.cspNonce}"`) : shell);
     };
     app.get(["/", "/index.html"], serveShell);
+    const assetCache=production ? resolve(options.dataDir??process.env.DATA_DIR??resolve(rootDir,"data"),"ui-assets") : null;
+    // Hashed build output: compressed once, cached by browsers for a year.
+    app.use("/assets", compressedAssets([resolve(distDir,"assets"), assetCache]));
     app.use(
       express.static(distDir, { index: false, maxAge: production ? "1h" : 0 }),
     );
     if(production) {
-      const assetCache=resolve(options.dataDir??process.env.DATA_DIR??resolve(rootDir,"data"),"ui-assets");
       const assets=resolve(distDir,"assets");
       if(existsSync(assets))retainUiAssets(assets,assetCache);
       app.use("/assets",express.static(assetCache,{index:false,maxAge:"1h"}));

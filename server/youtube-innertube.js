@@ -225,10 +225,12 @@ export function createInnertubeService({
   probe = defaultProbe, visitorData = fetchVisitorData, visitorLifetime = 6 * 3600000,
   potProviderUrl = env.YOUTUBE_POT_PROVIDER_URL || '', potLifetime = 5 * 3600000,
   sabr = null, sabrMode = env.YOUTUBE_SABR || 'auto', liveSession = createLiveSession,
+  resolvedLifetime = 30 * 60000,
 } = {}) {
   const pending = new Map(); // connectionId -> device authorization in progress
   const clients = new Map(); // `${connectionId}:${role}` -> { key, promise }; roles: browse (current TV client), player (TV_PLAYER_CLIENT)
   const pages = new Map(); // continuation token -> { feed, userId, connectionId, expires, map }
+  const resolved = new Map(); // `${connectionId}:${videoId}` -> { result, expires }: stream URLs stay valid for hours
   let anonymous = null, anonymousExpires = 0, library = null;
   // A client the user created in Google Cloud wins; otherwise YouTube's own TV-app client, read
   // from youtube.com/tv by youtubei.js and remembered on the connection after a successful sign-in.
@@ -581,8 +583,32 @@ export function createInnertubeService({
     return liveSession({ video: first.video, audio: first.audio, targetDurationSec: chosen.video.target_duration_sec || 5, refresh, log });
   }
   /** Direct H.264 + AAC stream URLs for TesPlayer's dual-input path, or null when InnerTube cannot supply them. */
+  const resolvedKey = (c, videoId) => `${c?.id || ''}:${videoId}`;
+  /** Reopening or resuming a video reuses its stream URLs instead of asking YouTube again. */
+  function remember(c, videoId, result) {
+    const expire = Number(new URL(result.video.url).searchParams.get('expire')) * 1000;
+    // Stop handing a URL out well before googlevideo stops honouring it.
+    const expires = Math.min(now() + resolvedLifetime, Number.isFinite(expire) && expire > 0 ? expire - 20 * 60000 : Infinity);
+    if (expires <= now()) return;
+    for (const [key, entry] of resolved) if (entry.expires <= now()) resolved.delete(key);
+    if (resolved.size >= 200) resolved.delete(resolved.keys().next().value);
+    resolved.set(resolvedKey(c, videoId), { result, expires });
+  }
+  /** Drop remembered URLs that googlevideo has started refusing. */
+  function forget(c, videoId) { resolved.delete(resolvedKey(c, videoId)); }
+  /** Prepare the player-role client ahead of the first play (it fetches YouTube's player script). */
+  function warm(req, c) {
+    if (c && innertubeSignedIn(c)) signedClient(req, c, 'player').catch(() => {});
+  }
   async function resolve(req, c, videoId, signal) {
     if (!VIDEO_ID.test(String(videoId))) throw providerError('Enter a valid YouTube video ID.', 400);
+    const known = resolved.get(resolvedKey(c, videoId));
+    if (known && known.expires > now()) return known.result;
+    const result = await resolveFresh(req, c, videoId, signal);
+    if (result?.video?.url && !result.isLive && result.via !== 'innertube-tv-sabr') remember(c, videoId, result);
+    return result;
+  }
+  async function resolveFresh(req, c, videoId, signal) {
     let sabrCandidate = null;
     const attempts = [];
     if (c && innertubeSignedIn(c)) {
@@ -629,9 +655,10 @@ export function createInnertubeService({
           return { url: url.href, headers: {}, hls: false, itag: format.itag, height: format.height, mimeType: format.mime_type };
         };
         const [video, audio] = await Promise.all([endpoint(chosen.video), endpoint(chosen.audio)]);
-        // Without a proof-of-origin token some clients get URLs that only serve the first megabyte.
-        // Read a slice from the middle of each file before handing the URLs to the player.
-        const usable = (await Promise.all([video, audio].map(stream => probe(stream.url, chosen.video === stream ? chosen.video.content_length : chosen.audio.content_length)))).every(Boolean);
+        // Without a proof-of-origin token anonymous clients get URLs that only serve the first
+        // megabyte, so read a slice from the middle of each file before handing them out. The
+        // signed-in TV client's URLs serve any range; checking them only delays the first frame.
+        const usable = attempt.client === 'TV' || (await Promise.all([video, audio].map(stream => probe(stream.url, chosen.video === stream ? chosen.video.content_length : chosen.audio.content_length)))).every(Boolean);
         if (!usable) { lastReason = `${attempt.client}: videoplayback refused a mid-file range (proof-of-origin token required)`; continue; }
         return { video, audio, isLive: false, via: attempt.via, title: text(info.basic_info?.title) };
       } catch (error) {
@@ -648,8 +675,8 @@ export function createInnertubeService({
     log.warn?.(`YouTube InnerTube could not resolve ${videoId} (${lastReason}); falling back to yt-dlp.`);
     return null;
   }
-  return { mode: isInnertubeMode, signedIn: innertubeSignedIn, configured, potConfigured, startSignIn, signInStatus, cancelSignIn, signOut, home, subscriptionsFeed, history, channels, playlists, search, channelVideos, playlistVideos, test, resolve,
-    _internal: { pending, pages, clients } };
+  return { mode: isInnertubeMode, signedIn: innertubeSignedIn, configured, potConfigured, startSignIn, signInStatus, cancelSignIn, signOut, home, subscriptionsFeed, history, channels, playlists, search, channelVideos, playlistVideos, test, resolve, forget, warm,
+    _internal: { pending, pages, clients, resolved } };
 }
 
 /** Express routes under /api/youtube/:connectionId for InnerTube-mode connections. Registered before the Data API routes; non-InnerTube connections fall through. */
@@ -673,7 +700,7 @@ export function registerInnertubeRoutes(app, { connection, route, art, service, 
   app.get(root + '/signin/status', only(async (req, res, c) => { owner(req, c); res.json(await service.signInStatus(req, c)); }));
   app.post(root + '/signin/cancel', only(async (req, res, c) => { owner(req, c); service.cancelSignIn(req, c); res.json({ status: 'none' }); }));
   app.post(root + '/signout', only(async (req, res, c) => { owner(req, c); await service.signOut(req, c); res.json({ ok: true }); }));
-  app.get(root + '/home', only(async (req, res, c) => res.json(withArt(req, c, await service.home(req, c, token(req))))));
+  app.get(root + '/home', only(async (req, res, c) => { service.warm?.(req, c); res.json(withArt(req, c, await service.home(req, c, token(req)))); }));
   app.get(root + '/history', only(async (req, res, c) => res.json(withArt(req, c, await service.history(req, c, token(req))))));
   app.get(root + '/feed', only(async (req, res, c) => res.json({ ...withArt(req, c, await service.subscriptionsFeed(req, c, token(req))), channelRows: [], basis: 'subscriptions' })));
   app.get(root + '/subscriptions', only(async (req, res, c) => res.json(withArt(req, c, await service.channels(req, c, token(req))))));
