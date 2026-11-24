@@ -200,6 +200,7 @@ export function createInnertubeService({
   getConnection, saveConfig, env = process.env, fetchImpl = globalThis.fetch, now = Date.now, log = console,
   createInnertube, cacheFactory, maxHeight = 1080, pageLifetime = 15 * 60000, requestTimeout = 25000,
   probe = defaultProbe, visitorData = fetchVisitorData, visitorLifetime = 6 * 3600000,
+  potProviderUrl = env.YOUTUBE_POT_PROVIDER_URL || '', potLifetime = 5 * 3600000,
 } = {}) {
   const pending = new Map(); // connectionId -> device authorization in progress
   const clients = new Map(); // connectionId -> { key, promise }
@@ -359,14 +360,39 @@ export function createInnertubeService({
     if (yt.session.oauth?.oauth2_tokens && yt.session.oauth.oauth2_tokens.access_token !== token.accessToken) yt.session.oauth.setTokens(tokenSet(token));
     return yt;
   }
+  /**
+   * Proof-of-origin token from a bgutil-ytdlp-pot-provider HTTP server, bound to the
+   * visitor data. YouTube asks for one from datacenter addresses ("Sign in to confirm
+   * you're not a bot") and refuses to serve more than a slice of a file without it.
+   */
+  const pots = new Map();
+  async function poToken(binding) {
+    if (!potProviderUrl || !binding) return undefined;
+    const cached = pots.get(binding);
+    if (cached && cached.expires > now()) return cached.token;
+    const url = new URL('/get_pot', potProviderUrl.endsWith('/') ? potProviderUrl : `${potProviderUrl}/`);
+    const response = await fetchImpl(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content_binding: binding }), signal: AbortSignal.timeout(60000) });
+    const data = await response.json().catch(() => ({}));
+    const token = data.poToken || data.po_token;
+    if (!response.ok || typeof token !== 'string' || !token) throw providerError(`The proof-of-origin token provider answered ${response.status}${data.error ? `: ${String(data.error).slice(0, 120)}` : ''}.`, 502);
+    const expires = Math.min(Date.parse(data.expiresAt) || Infinity, now() + potLifetime);
+    pots.set(binding, { token, expires });
+    if (pots.size > 50) pots.delete(pots.keys().next().value);
+    return token;
+  }
   async function anonymousClient(renew = false) {
     if (!anonymous || renew || anonymousExpires < now()) {
       anonymousExpires = now() + visitorLifetime;
-      anonymous = (async () => build({ visitor_data: await visitorData() }))();
+      anonymous = (async () => {
+        const visitor = await visitorData();
+        const pot = await poToken(visitor).catch(error => { log.warn?.('YouTube proof-of-origin token unavailable:', error.message); return undefined; });
+        return build({ visitor_data: visitor, ...(pot ? { po_token: pot } : {}) });
+      })();
       anonymous.catch(() => { anonymous = null; });
     }
     return anonymous;
   }
+  const potConfigured = () => Boolean(potProviderUrl);
   function translate(error) {
     if (error?.status) return error;
     const message = String(error?.message || '');
@@ -455,6 +481,8 @@ export function createInnertubeService({
     if (!VIDEO_ID.test(String(videoId))) throw providerError('Enter a valid YouTube video ID.', 400);
     const attempts = [];
     if (c && innertubeSignedIn(c)) attempts.push({ client: 'TV', open: () => signedClient(req, c) });
+    // visionOS is the one anonymous client that still hands out plain URLs; with a proof-of-origin
+    // token (when a provider is configured) its player request and stream URLs carry the token.
     attempts.push({ client: 'VISIONOS', open: () => anonymousClient(), renew: () => anonymousClient(true) });
     let lastReason = '';
     for (const attempt of attempts) {
@@ -494,7 +522,7 @@ export function createInnertubeService({
     log.warn?.(`YouTube InnerTube could not resolve ${videoId} (${lastReason}); falling back to yt-dlp.`);
     return null;
   }
-  return { mode: isInnertubeMode, signedIn: innertubeSignedIn, configured, startSignIn, signInStatus, cancelSignIn, signOut, home, subscriptionsFeed, history, channels, playlists, search, channelVideos, playlistVideos, test, resolve,
+  return { mode: isInnertubeMode, signedIn: innertubeSignedIn, configured, potConfigured, startSignIn, signInStatus, cancelSignIn, signOut, home, subscriptionsFeed, history, channels, playlists, search, channelVideos, playlistVideos, test, resolve,
     _internal: { pending, pages, clients } };
 }
 

@@ -70,6 +70,15 @@ test('compact output supports combined streams, unlabelled HLS audio and preserv
   const broken = createYouTubeResolver({ enabled: true, resolverUrl: '', run: async () => ({ stdout: '<html>secret upstream error</html>' }) });
   await assert.rejects(broken(id), error => error.status === 502 && !error.message.includes('secret'));
 });
+test('a configured proof-of-origin token provider is passed to the yt-dlp plugin', async () => {
+  let seen;
+  const resolver = createYouTubeResolver({ enabled: true, resolverUrl: '', potProviderUrl: 'http://pot:4416/', run: async (_binary, args) => { seen = args; return { stdout: output() }; } });
+  await resolver(id);
+  assert.equal(seen[seen.indexOf('--extractor-args') + 1], 'youtubepot-bgutilhttp:base_url=http://pot:4416');
+  const plain = createYouTubeResolver({ enabled: true, resolverUrl: '', run: async (_binary, args) => { seen = args; return { stdout: output() }; } });
+  await plain(id);
+  assert.ok(!seen.includes('--extractor-args'));
+});
 test('resolver bounds simultaneous jobs and releases slots after completion', async () => {
   const releases = [];
   const resolver = createYouTubeResolver({ enabled: true, resolverUrl: '', run: () => new Promise(resolve => releases.push(() => resolve({ stdout: output() }))) });

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - YouTube **Sign in on this screen**: Google's TV device-code flow (enter a short code at google.com/device on your phone) signs the server in to YouTube's InnerTube API through `youtubei.js`. The YouTube hub gains a real **Home** tab, newest uploads from all subscriptions, account watch history, quota-free search, channel and playlist browsing. Works out of the box with YouTube's own TV-app client; your own Google OAuth client of type “TVs and Limited Input devices” is optional (per connection or `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET`).
+- Optional `pot` Compose profile with a proof-of-origin token provider (`YOUTUBE_POT_PROVIDER_URL`) for servers on datacenter addresses; the InnerTube path and the yt-dlp resolver both use it.
 - YouTube playback resolves streams through InnerTube first (signed-in TV client, then an anonymous visionOS client with page visitor data): best H.264 track at or below 1080p plus AAC audio, re-chunked into bounded byte ranges by the media proxy. yt-dlp remains the fallback and the live-stream path.
 
 ## 0.2.2 — 2026-11-05

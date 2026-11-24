@@ -27,7 +27,9 @@ export function normalizeYouTube(info, expectedId) {
 }
 
 /** Resolve metadata and stream URLs only; no video files or account cookies are downloaded. */
-export function createYouTubeResolver({ binary = process.env.YT_DLP_PATH || 'yt-dlp', run = execute, enabled = process.env.YOUTUBE_ENABLED === 'true', resolverUrl = process.env.YOUTUBE_RESOLVER_URL || '' } = {}) {
+export function createYouTubeResolver({ binary = process.env.YT_DLP_PATH || 'yt-dlp', run = execute, enabled = process.env.YOUTUBE_ENABLED === 'true', resolverUrl = process.env.YOUTUBE_RESOLVER_URL || '', potProviderUrl = process.env.YOUTUBE_POT_PROVIDER_URL || '' } = {}) {
+  // bgutil-ytdlp-pot-provider plugin: proof-of-origin tokens from the shared provider service.
+  const potArgs = potProviderUrl ? ['--extractor-args', `youtubepot-bgutilhttp:base_url=${potProviderUrl.replace(/\/$/, '')}`] : [];
   let active = 0;
   return async (input, signal) => {
     const id = validateYouTubeId(input);
@@ -53,7 +55,7 @@ export function createYouTubeResolver({ binary = process.env.YT_DLP_PATH || 'yt-
     try {
       const { stdout } = await run(binary, [
         '--ignore-config', '--no-playlist', '--skip-download', '--print', streamTemplate, '--no-warnings', '--no-progress', '--no-cache-dir',
-        '--socket-timeout', '15', '--retries', '1', '--extractor-retries', '1', '--js-runtimes', `node:${process.execPath}`,
+        '--socket-timeout', '15', '--retries', '1', '--extractor-retries', '1', '--js-runtimes', `node:${process.execPath}`, ...potArgs,
         '-f', 'bv[protocol^=m3u8][height<=1080][vcodec^=avc1]+ba[protocol^=m3u8]/bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=1080][ext=mp4]',
         '--', `https://www.youtube.com/watch?v=${id}`,
       ], { timeout: 90000, maxBuffer: 8 * 1024 * 1024, signal, windowsHide: true });

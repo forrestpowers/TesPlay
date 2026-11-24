@@ -243,6 +243,16 @@ The resolver runs privately on the Compose network and does not publish a host p
 
 For a native install, install [yt-dlp with its default extras](https://github.com/yt-dlp/yt-dlp#installation), set `YOUTUBE_ENABLED=true` in `.env` and restart the server. Set `YT_DLP_PATH` if needed. The Docker resolver version is pinned through `YT_DLP_VERSION` in `.env.example`; upstream changes can require updating it. Restricted or unresolved videos may fail.
 
+**Hosted on a datacenter address (Oracle, Hetzner, a VPS)?** YouTube answers anonymous stream requests from such addresses with “Sign in to confirm you’re not a bot”. Start the optional proof-of-origin token provider and point TesPlay at it; both the built-in InnerTube path and the yt-dlp resolver then attach a token to their requests:
+
+```sh
+# .env
+YOUTUBE_POT_PROVIDER_URL=http://pot:4416
+docker compose --profile youtube --profile pot up -d --build
+```
+
+The provider (`brainicism/bgutil-ytdlp-pot-provider`) stays on the internal Compose network and needs no configuration. See [deployment notes](docs/deployment.md#youtube-from-a-datacenter-address-proof-of-origin-tokens).
+
 Google Drive and YouTube OAuth require your own Google web client, the relevant enabled API and exact redirect URIs: `https://media.example.com/api/drive/callback` and `https://media.example.com/api/youtube/callback`. Configure clients through Connections or the installation-level `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. See [Google OAuth setup](docs/deployment.md#google-drive-oauth).
 
 </details>

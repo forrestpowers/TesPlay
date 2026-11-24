@@ -19,6 +19,7 @@ services:
       SERVER_NAME: ${SERVER_NAME:-TesPlay}
       REMOTE_ENABLED: ${REMOTE_ENABLED:-true}
       YOUTUBE_RESOLVER_URL: http://youtube:4180
+      YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-}
       SETUP_TOKEN: ${SETUP_TOKEN:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -58,6 +59,7 @@ services:
     environment:
       YOUTUBE_ENABLED: "true"
       YT_DLP_PATH: /opt/yt-dlp/bin/yt-dlp
+      YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-}
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -70,6 +72,20 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 15s
+      retries: 3
+
+  # Opt-in proof-of-origin token provider for servers on datacenter addresses. Internal only.
+  # Set YOUTUBE_POT_PROVIDER_URL=http://pot:4416 for the app and resolver to use it.
+  pot:
+    profiles: [pot]
+    image: ${POT_PROVIDER_IMAGE:-brainicism/bgutil-ytdlp-pot-provider:latest}
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4416/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
       retries: 3
 
   # Optional: reuses a remotely managed tunnel. It does not create DNS or Access rules.

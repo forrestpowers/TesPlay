@@ -65,13 +65,14 @@ test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 1
   assert.equal(chooseStreams(noAac), null);
 });
 
-function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'] } = {}) {
+function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '' } = {}) {
   const connections = new Map([['c1', { id: 'c1', type: 'youtube', name: 'YouTube', config: { authMode: 'innertube', tvClientId: 'tv-client', tvClientSecret: 'tv-secret', ...config } }]]);
   const saved = [];
   const fetchCalls = [];
   const fetchImpl = async (url, init) => {
     const raw = String(init?.body || '');
     fetchCalls.push({ url: String(url), json: raw.startsWith('{'), body: raw.startsWith('{') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw)) });
+    if (String(url).endsWith('/get_pot')) return { ok: true, status: 200, json: async () => ({ poToken: `pot-for-${JSON.parse(raw).content_binding}`, contentBinding: JSON.parse(raw).content_binding, expiresAt: new Date(NOW + 6 * 3600000).toISOString() }) };
     const next = fetchResponses.shift() || { status: 500, body: { error: 'unexpected' } };
     return { ok: next.status < 300, status: next.status, json: async () => next.body };
   };
@@ -107,7 +108,7 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
   };
   const service = createInnertubeService({
     getConnection: (_req, id) => connections.get(id), saveConfig: (_req, c, patch) => { saved.push(patch); const current = connections.get(c.id); current.config = { ...current.config, ...patch }; },
-    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n',
+    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n', potProviderUrl,
   });
   return { service, connections, saved, fetchCalls, created, req: { user: { id: 'owner' } } };
 }
@@ -233,6 +234,26 @@ test('browsing uses one signed-in TV client per connection, refreshes expired to
   const lesson = (await f.service.playlistVideos(f.req, c, 'WL')).items[0];
   assert.equal(lesson.title, 'Lesson 1'); assert.equal(lesson.subtitle, 'ThoracicSurgeons');
   assert.equal(f.fetchCalls.length, 1);
+});
+
+test('with a proof-of-origin token provider the anonymous client carries a token bound to its visitor data', async () => {
+  let calls = 0;
+  const f = fixture({ potProviderUrl: 'http://pot:4416/', info: (_client, yt) => ({ playability_status: { status: yt.options.visitor_data === 'visitor-2' ? 'OK' : 'LOGIN_REQUIRED', reason: '' }, basic_info: {}, streaming_data: yt.options.visitor_data === 'visitor-2' ? streaming() : undefined }) });
+  assert.equal(f.service.potConfigured(), true);
+  const resolved = await f.service.resolve(f.req, { id: 'c2', type: 'youtube', config: { apiKey: 'k' } }, 'aqz-KE-bpKQ');
+  assert.equal(resolved.via, 'innertube-visionos');
+  assert.equal(f.fetchCalls[0].url, 'http://pot:4416/get_pot');
+  assert.deepEqual(f.fetchCalls[0].body, { content_binding: 'visitor-1' });
+  assert.equal(f.created[0].options.visitor_data, 'visitor-1');
+  assert.equal(f.created[0].options.po_token, 'pot-for-visitor-1');
+  // The bot check renews the visitor data and its token once, then visionOS succeeds.
+  assert.deepEqual(f.created.map(yt => yt.options.po_token), ['pot-for-visitor-1', 'pot-for-visitor-2']);
+  assert.equal(f.fetchCalls.length, 2, 'one token per visitor data');
+  void calls;
+  const none = fixture({ info: () => ({ playability_status: { status: 'LOGIN_REQUIRED' }, basic_info: {} }) });
+  assert.equal(none.service.potConfigured(), false);
+  assert.equal(await none.service.resolve(none.req, { id: 'c2', type: 'youtube', config: {} }, 'aqz-KE-bpKQ'), null, 'without a provider only visionOS is tried');
+  assert.ok(none.created.every(yt => !yt.options.po_token));
 });
 
 test('rawTvPage reads tiles and continuation tokens out of a TV browse response', () => {
