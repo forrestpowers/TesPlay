@@ -29,7 +29,7 @@
     "packages/player/src/capabilities.ts": "60a1593ec0f37dfb7afbcfc5ab8bda9b45626a740d3782b2a3a0ca3904a6d3d9",
     "packages/player/src/clock.ts": "cc690ab425f03d9278d9e06e2c5301bfcbfc504e2b15cbade3ed644fa5ce3cd9",
     "packages/player/src/decoder-controller.ts": "86c683237db470a041780a0da0f7e1da7d8528e55178f3d13c917927644a1ac3",
-    "packages/player/src/engine.ts": "a6fa8e57663675f7f0330e3a1af963c17b4ac0cad541f8d7f4d7b865062b628f",
+    "packages/player/src/engine.ts": "e8b6463c30c65f0a7bceba10e62edb1194f9f5f0f36bb42674baa637a32723bc",
     "packages/player/src/errors.ts": "1c2f35840da0a11401c0a0c69b73a61e4ebd46202c31b079faee0f21e6202f70",
     "packages/player/src/geometry.ts": "c53a9253df8acba1e319fd7fce306c7e43a25bf95383134a436bf34b6647ba73",
     "packages/player/src/hls-resources.ts": "ac101a2bc610c2b4fa9c448761af17944f9bc74b8f7724a86f9508a941c89658",

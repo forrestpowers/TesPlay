@@ -1435,7 +1435,9 @@ export class CanvasPlayerEngine implements PlayerEngine {
     const metadata = await input.getDurationFromMetadata(tracks, { skipLiveWait: true });
     if (metadata !== null && Number.isFinite(metadata) && metadata > 0) return metadata;
     // Live duration is its rolling window, never an end-of-stream scan.
-    return session.isLive
+    // TesPlay patch: a sequential (continuous) source cannot be scanned to its end and
+    // then read again from the start, so its duration stays unknown until it ends.
+    return session.isLive || isContinuous(session)
       ? metadata
       : input.computeDuration(tracks, { skipLiveWait: true });
   }
