@@ -775,7 +775,7 @@ export default function App() {
         )}
         {view === "apps" && (
           <Suspense fallback={<Busy label="Loading YouTube…" />}>
-            <YouTubeHub hideYouTubeShorts={hideYouTubeShorts} connections={connections} library={rawLibrary} onOpen={open} onFavorite={favorite}
+            <YouTubeHub hideYouTubeShorts={hideYouTubeShorts} connections={connections} library={rawLibrary} onOpen={open} onFavorite={favorite} canManage={auth.user.canManageConnections ?? auth.user.role === "owner"} onReloadConnections={reloadConnections}
               onConnect={() => connect(connections.some(c => c.type === "youtube") ? undefined : "youtube")} initialConnectionId={selectedConnection?.type === "youtube" ? selectedConnection.id : undefined} initialChannel={youtubeChannel} onStar={star} onClearQueue={()=>void updateQueue("clear").catch(e=>showToast(errorMessage(e)))} onRemoveQueue={item=>void updateQueue("remove",item).catch(e=>showToast(errorMessage(e)))} />
           </Suspense>
         )}

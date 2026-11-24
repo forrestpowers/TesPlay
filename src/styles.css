@@ -2702,3 +2702,23 @@ form {
 .youtube-device-signin .youtube-device-done { display:flex; align-items:center; gap:10px; color:#8fe0a5; }
 .youtube-device-signin .form-help .spin { vertical-align:-2px; margin-right:6px; }
 .youtube-signin-mode { margin-bottom:14px; }
+
+/* Full-screen YouTube phone sign-in */
+.youtube-signin { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:48px; min-height:60vh; padding:64px 0 24px; }
+.youtube-signin-brand { display:inline-flex; align-items:center; gap:10px; font-weight:600; color:#d4d4d8; margin-bottom:26px; }
+.youtube-signin-copy h1 { font-size:clamp(34px,4.6vw,56px); line-height:1.08; margin:0 0 28px; letter-spacing:-0.02em; }
+.youtube-signin-steps { list-style:none; margin:0; padding:0; display:grid; gap:18px; }
+.youtube-signin-steps li { display:flex; align-items:center; gap:16px; font-size:clamp(17px,1.6vw,22px); color:#a4a4aa; }
+.youtube-signin-steps li p { margin:0; }
+.youtube-signin-steps li span { flex-shrink:0; width:38px; height:38px; border-radius:50%; background:#ffffff12; border:1px solid #ffffff1c; display:grid; place-items:center; font-size:15px; color:#d4d4d8; }
+.youtube-signin-steps strong { color:#f4f4f5; font-weight:600; }
+.youtube-signin-inline-code { font-family:"SF Mono","Menlo",monospace; letter-spacing:0.12em; }
+.youtube-signin-status { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:28px 0 0; color:#a4a4aa; min-height:24px; }
+.youtube-signin-status .form-error { margin:0; }
+.youtube-signin-card { background:#141416; border:1px solid #ffffff14; border-radius:28px; padding:28px 28px 22px; display:grid; justify-items:center; gap:18px; }
+.youtube-signin-card .qr-art, .youtube-signin-qr-placeholder { width:320px; height:320px; border-radius:18px; overflow:hidden; background:#fff; display:grid; place-items:center; }
+.youtube-signin-card .qr-art canvas { display:block; width:320px; height:320px; }
+.youtube-signin-qr-placeholder { color:#555; }
+.youtube-signin-code { font-family:"SF Mono","Menlo",monospace; font-size:40px; letter-spacing:0.18em; color:#f4f4f5; min-height:48px; }
+.youtube-signin-alt { color:#71717a; margin:0; }
+@media (max-width:900px) { .youtube-signin { grid-template-columns:1fr; justify-items:center; text-align:center; } .youtube-signin-steps li { text-align:left; } }

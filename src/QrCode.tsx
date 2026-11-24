@@ -6,9 +6,11 @@ import "./qr.css";
 export default function QrCode({
   value,
   label,
+  size = 248,
 }: {
   value: string;
   label: string;
+  size?: number;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
@@ -21,7 +23,7 @@ export default function QrCode({
       .then(async (qr) => {
         if (cancelled || !canvas.current) return;
         await qr.toCanvas(canvas.current, value, {
-          width: 248,
+          width: size,
           margin: 4,
           errorCorrectionLevel: "M",
           color: { dark: "#101013", light: "#ffffff" },
@@ -34,7 +36,7 @@ export default function QrCode({
     return () => {
       cancelled = true;
     };
-  }, [value]);
+  }, [value, size]);
   return (
     <div className="qr-art" role="img" aria-label={label}>
       <canvas
