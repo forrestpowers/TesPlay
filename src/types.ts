@@ -79,7 +79,7 @@ export type Playback = {
   provider?: "plex" | "youtube" | "stremio";
   url: string;
   type: "hls" | "video" | "audio" | "external";
-  streamKind?: "direct-file" | "continuous-ts" | "dual-input";
+  streamKind?: "direct-file" | "continuous-ts" | "dual-input" | "growing-fmp4";
   audioUrl?: string;
   isLive?: boolean;
   message?: string;
