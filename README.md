@@ -237,7 +237,7 @@ docker compose --profile youtube up -d --build
 docker compose --profile youtube --profile tunnel up -d --build
 ```
 
-YouTube playback first tries YouTube's own InnerTube API through the bundled `youtubei.js` client, which needs no extra service: it picks the best H.264 track at or below 1080p plus AAC audio and proxies both as re-chunked byte ranges to TesPlayer. Public videos work without any sign-in; a signed-in connection (below) is tried first. The yt-dlp resolver below is the fallback for videos InnerTube cannot resolve, and it still serves live streams over HLS.
+YouTube playback first tries YouTube's own InnerTube API through the bundled `youtubei.js` client, which needs no extra service: it picks the best H.264 track at or below 1080p plus AAC audio and proxies both as re-chunked byte ranges to TesPlayer. Public videos work without any sign-in; a signed-in connection (below) is tried first. The yt-dlp resolver below is the fallback for videos InnerTube cannot resolve. Live broadcasts play through the signed-in connection, relayed segment by segment from the server; without sign-in they use the yt-dlp resolver over HLS.
 
 The resolver runs privately on the Compose network and does not publish a host port. Browsing needs either **Sign in on this screen** (below) or your own YouTube Data API key / Google web OAuth client. With a Data API client, YouTube account watch history and Home recommendations are not available.
 

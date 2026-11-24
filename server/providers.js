@@ -553,6 +553,11 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     req.res.once("close", () => { if (!req.res.writableEnded) controller.abort(); });
     // InnerTube first (signed-in TV client, then anonymous iOS); yt-dlp remains the fallback and the live path.
     let resolved = innertube ? await innertube.resolve(req, c, videoId, controller.signal).catch(error => { if (error?.status === 400) throw error; return null; }) : null;
+    if (resolved?.live) {
+      // A live broadcast relayed segment by segment: two growing fragmented-MP4 tracks.
+      const track = (name) => media.register(req, c, { kind: "video", live: { session: resolved.live, track: name }, contentType: name === "audio" ? "audio/mp4" : "video/mp4" });
+      return { url: track("video"), audioUrl: track("audio"), type: "video", isLive: true, streamKind: "growing-fmp4", provider: "youtube", via: resolved.via };
+    }
     if (!resolved?.video) resolved = await resolveYouTube(videoId, controller.signal);
     const register = (resource) => media.register(req, c, resource.spool
       // A SABR track spooled on the server: served by byte range as it downloads.

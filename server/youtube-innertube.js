@@ -10,6 +10,7 @@ import https from 'node:https';
 import vm from 'node:vm';
 import { providerError, validateRemoteUrl } from './media.js';
 import { plainText } from './text.js';
+import { createLiveSession } from './youtube-live.js';
 
 // Google's documented endpoints for a client you create yourself ("TVs and Limited Input devices").
 const DEVICE_CODE_URL = 'https://oauth2.googleapis.com/device/code';
@@ -223,7 +224,7 @@ export function createInnertubeService({
   pageLifetime = 15 * 60000, requestTimeout = 25000,
   probe = defaultProbe, visitorData = fetchVisitorData, visitorLifetime = 6 * 3600000,
   potProviderUrl = env.YOUTUBE_POT_PROVIDER_URL || '', potLifetime = 5 * 3600000,
-  sabr = null, sabrMode = env.YOUTUBE_SABR || 'auto',
+  sabr = null, sabrMode = env.YOUTUBE_SABR || 'auto', liveSession = createLiveSession,
 } = {}) {
   const pending = new Map(); // connectionId -> device authorization in progress
   const clients = new Map(); // `${connectionId}:${role}` -> { key, promise }; roles: browse (current TV client), player (TV_PLAYER_CLIENT)
@@ -557,6 +558,28 @@ export function createInnertubeService({
     });
     return { sabr: session, video: { spool: session.video }, audio: { spool: session.audio }, isLive: false, via: 'innertube-sabr', title: text(info.basic_info?.title) };
   }
+  /** A live session over the H.264 and AAC segment URLs of a live player response, or null without them. */
+  async function liveStreams(yt, info, videoId) {
+    const chosen = chooseStreams(info.streaming_data, { maxHeight });
+    if (!chosen) return null;
+    const urls = async (streamingData, video, audio) => {
+      const pick = itag => streamingData?.adaptive_formats?.find(f => f.itag === itag && (f.url || f.signature_cipher || f.cipher));
+      const formats = [pick(video), pick(audio)];
+      if (formats.some(f => !f)) return null;
+      const [v, a] = await Promise.all(formats.map(async format => {
+        const url = validateRemoteUrl(await format.decipher(yt.session.player));
+        if (url.protocol !== 'https:' || !/(?:^|\.)googlevideo\.com$/.test(url.hostname)) throw new Error('unexpected stream host');
+        return { url: url.href, itag: format.itag };
+      }));
+      return { video: v, audio: a };
+    };
+    const first = await urls(info.streaming_data, chosen.video.itag, chosen.audio.itag);
+    if (!first) return null;
+    // Stream URLs expire after a few hours; a long broadcast asks the same client for fresh ones.
+    const refresh = async () => urls((await timed(yt.getBasicInfo(videoId, {}))).streaming_data, chosen.video.itag, chosen.audio.itag);
+    log.info?.(`YouTube live ${videoId}: video itag ${chosen.video.itag} ${chosen.video.height || ''}p, audio itag ${chosen.audio.itag}.`);
+    return liveSession({ video: first.video, audio: first.audio, targetDurationSec: chosen.video.target_duration_sec || 5, refresh, log });
+  }
   /** Direct H.264 + AAC stream URLs for TesPlayer's dual-input path, or null when InnerTube cannot supply them. */
   async function resolve(req, c, videoId, signal) {
     if (!VIDEO_ID.test(String(videoId))) throw providerError('Enter a valid YouTube video ID.', 400);
@@ -583,6 +606,12 @@ export function createInnertubeService({
           yt = await attempt.renew();
           info = await timed(yt.getBasicInfo(videoId, attempt.options));
           status = info.playability_status?.status;
+        }
+        if (info.basic_info?.is_live && attempt.via === 'innertube-tv' && status === 'OK') {
+          // The older TV client lists a live broadcast as per-segment URLs; relay them as growing fragmented MP4.
+          const live = await liveStreams(yt, info, videoId);
+          if (live) return { isLive: true, live, via: 'innertube-tv-live', title: text(info.basic_info?.title) };
+          lastReason = 'TV: live broadcast without H.264/AAC segment URLs'; continue;
         }
         if (info.basic_info?.is_live || info.basic_info?.is_upcoming) return { isLive: true, info: info.basic_info };
         if (status && status !== 'OK') { lastReason = `${attempt.client}: ${status} ${info.playability_status?.reason || ''}`.trim(); continue; }

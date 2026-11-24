@@ -508,6 +508,7 @@ export function createMediaService(ctx) {
         ? await item.getHeaders(req, connection)
         : item.headers;
       if (item.spool) return spoolProxy(req, res, item, controller);
+      if (item.live) return liveProxy(req, res, item, controller);
       if (item.chunkBytes && item.kind !== "hls")
         return chunkedProxy(req, res, item, currentHeaders, controller);
       const headers = {
@@ -688,6 +689,24 @@ export function createMediaService(ctx) {
       if (item?.kind === "artwork" && error.status === 502 && !controller.signal.aborted && !res.headersSent)
         return unavailableArtwork(res);
       next(error);
+    }
+  }
+  /** Relay one track of a YouTube live broadcast as a growing fragmented MP4 with no known length. */
+  async function liveProxy(req, res, item, controller) {
+    res.status(200).set({ "Content-Type": item.contentType || "video/mp4", "Cache-Control": "private, no-store" });
+    if (req.method === "HEAD") return res.end();
+    let started = false;
+    try {
+      for await (const chunk of item.live.session.read(item.live.track, controller.signal)) {
+        started = true;
+        if (!res.write(chunk)) await new Promise(resolve => res.once("drain", resolve));
+        if (res.destroyed) return;
+      }
+      res.end();
+    } catch (error) {
+      if (controller.signal.aborted || res.destroyed) return;
+      if (!started && !res.headersSent) return res.status(502).json({ error: "YouTube did not deliver the live stream." });
+      res.destroy(error);
     }
   }
   /** Serve a track that is still being written on the server (a YouTube SABR spool) by byte range. */

@@ -104,7 +104,7 @@ test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 1
   assert.equal(chooseStreams(surround).audio.itag, 140, 'stereo is preferred over a louder 5.1 track');
 });
 
-function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '', sabr = null, sabrMode = 'auto' } = {}) {
+function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '', sabr = null, sabrMode = 'auto', liveSession } = {}) {
   const connections = new Map([['c1', { id: 'c1', type: 'youtube', name: 'YouTube', config: { authMode: 'innertube', tvClientId: 'tv-client', tvClientSecret: 'tv-secret', ...config } }]]);
   const saved = [];
   const fetchCalls = [];
@@ -148,7 +148,7 @@ function fixture({ config = {}, info, fetchResponses = [], probe = async () => t
   };
   const service = createInnertubeService({
     getConnection: (_req, id) => connections.get(id), saveConfig: (_req, c, patch) => { saved.push(patch); const current = connections.get(c.id); current.config = { ...current.config, ...patch }; },
-    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n', potProviderUrl, maxHeight: 1080, sabr, sabrMode,
+    env: {}, fetchImpl, now: () => NOW, createInnertube, log: { warn: () => {} }, requestTimeout: 2000, probe, visitorData: async () => visitors.shift() || 'visitor-n', potProviderUrl, maxHeight: 1080, sabr, sabrMode, ...(liveSession ? { liveSession } : {}),
   });
   return { service, connections, saved, fetchCalls, created, req: { user: { id: 'owner' } } };
 }
@@ -419,4 +419,24 @@ test('when the older TV player client also gets SABR-only data, the current TV c
   const plain = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: () => ({ playability_status: { status: 'OK' }, basic_info: {}, streaming_data: streaming() }), sabr: bridge, sabrMode: 'prefer' });
   assert.equal((await plain.service.resolve(plain.req, plain.connections.get('c1'), 'aqz-KE-bpKQ')).via, 'innertube-tv');
   assert.equal(plain.created.length, 1);
+});
+
+test('a live broadcast for a signed-in connection is relayed from the older TV client segment URLs instead of going to yt-dlp', async () => {
+  const sessions = [];
+  const liveSession = options => { const session = { options }; sessions.push(session); return session; };
+  const liveInfo = () => { const data = streaming(); data.adaptive_formats.forEach(f => { f.target_duration_sec = 2; }); return { playability_status: { status: 'OK' }, basic_info: { title: 'Harbor cam', is_live: true }, streaming_data: data }; };
+  const f = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: liveInfo, liveSession });
+  const resolved = await f.service.resolve(f.req, f.connections.get('c1'), 'aqz-KE-bpKQ');
+  assert.equal(resolved.isLive, true);
+  assert.equal(resolved.via, 'innertube-tv-live');
+  assert.equal(resolved.live, sessions[0]);
+  assert.equal(sessions[0].options.video.url, 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=137&n=ok');
+  assert.equal(sessions[0].options.audio.url, 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=140&n=ok');
+  assert.equal(sessions[0].options.targetDurationSec, 2);
+  assert.deepEqual(f.created[0].calls, [['getBasicInfo', 'aqz-KE-bpKQ', undefined]], 'asked as the older TV client, nothing else');
+  assert.deepEqual(await sessions[0].options.refresh(), { video: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=137&n=ok', itag: 137 }, audio: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=140&n=ok', itag: 140 } }, 'refresh asks the same client for the same itags');
+  // Without sign-in a live broadcast still defers to the yt-dlp path.
+  const anonymous = fixture({ info: liveInfo, liveSession });
+  assert.deepEqual(await anonymous.service.resolve(anonymous.req, anonymous.connections.get('c1'), 'aqz-KE-bpKQ'), { isLive: true, info: { title: 'Harbor cam', is_live: true } });
+  assert.equal(sessions.length, 1);
 });
