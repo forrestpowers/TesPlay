@@ -251,7 +251,7 @@ YOUTUBE_POT_PROVIDER_URL=http://pot:4416
 docker compose --profile youtube --profile pot up -d --build
 ```
 
-The provider (`brainicism/bgutil-ytdlp-pot-provider`) stays on the internal Compose network and needs no configuration. Where even that is refused (Oracle Cloud, for one), a signed-in connection plays through YouTube's own adaptive protocol (SABR) instead, spooled by the server; see [deployment notes](docs/deployment.md#youtube-sabr-playback-signed-in-any-address).
+The provider (`brainicism/bgutil-ytdlp-pot-provider`) stays on the internal Compose network and needs no configuration. Where even that is refused (Oracle Cloud, for one), a signed-in connection plays through YouTube's own adaptive protocol (SABR) instead: the server spools the tracks and serves them by byte range, with seeking and the full duration; see [deployment notes](docs/deployment.md#youtube-sabr-playback-signed-in-any-address).
 
 Google Drive and YouTube OAuth require your own Google web client, the relevant enabled API and exact redirect URIs: `https://media.example.com/api/drive/callback` and `https://media.example.com/api/youtube/callback`. Configure clients through Connections or the installation-level `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. See [Google OAuth setup](docs/deployment.md#google-drive-oauth).
 

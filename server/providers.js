@@ -555,8 +555,8 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     let resolved = innertube ? await innertube.resolve(req, c, videoId, controller.signal).catch(error => { if (error?.status === 400) throw error; return null; }) : null;
     if (!resolved?.video) resolved = await resolveYouTube(videoId, controller.signal);
     const register = (resource) => media.register(req, c, resource.spool
-      // A SABR track spooled on the server: served sequentially as it downloads.
-      ? { kind: "video", spool: resource.spool, contentType: "video/mp4" }
+      // A SABR track spooled on the server: served by byte range as it downloads.
+      ? { kind: "video", spool: resource.spool, contentType: "video/mp4", touch: () => resolved.sabr?.touch?.() }
       : {
         url: resource.url, headers: resource.headers, kind: resource.hls ? "hls" : "video",
         // googlevideo refuses open-ended and multi-megabyte ranges; the proxy re-chunks them.
@@ -567,7 +567,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       ...(resolved.audio ? { audioUrl: register(resolved.audio) } : {}),
       type: resolved.video.hls ? "hls" : "video",
       isLive: resolved.isLive,
-      streamKind: resolved.video.spool ? "growing-fmp4" : resolved.audio ? "dual-input" : "direct-file",
+      streamKind: resolved.audio ? "dual-input" : "direct-file",
       provider: "youtube",
       ...(resolved.via ? { via: resolved.via } : {}),
     };

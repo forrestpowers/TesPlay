@@ -690,15 +690,28 @@ export function createMediaService(ctx) {
       next(error);
     }
   }
-  /** Stream a track that is still being written on the server (a YouTube SABR spool). */
+  /** Serve a track that is still being written on the server (a YouTube SABR spool) by byte range. */
   async function spoolProxy(req, res, item, controller) {
     const spool = item.spool;
     item.touch?.();
-    if (spool.error && !spool.size) return res.status(502).json({ error: "YouTube stopped the adaptive stream before it started." });
-    res.status(200).set({ "Content-Type": item.contentType || "video/mp4", "Accept-Ranges": "none", "Cache-Control": "private, no-store" });
+    let layout;
+    try {
+      layout = await Promise.race([spool.ready(controller.signal), delay(30000, undefined, { signal: controller.signal }).then(() => null)]);
+    } catch {
+      if (controller.signal.aborted) return;
+      return res.status(502).json({ error: "YouTube stopped the adaptive stream before it started." });
+    }
+    if (!layout) return res.status(504).json({ error: "YouTube's adaptive stream did not start in time." });
+    const total = layout.total;
+    const requested = /^bytes=(\d+)-(\d*)$/.exec(String(req.headers.range || ""));
+    const start = requested ? Number(requested[1]) : 0;
+    const end = requested && requested[2] !== "" ? Math.min(Number(requested[2]), total - 1) : total - 1;
+    if (start >= total || start > end) return res.status(416).set("Content-Range", `bytes */${total}`).end();
+    res.setHeader('X-Csp-Representation-Id', 'mr1_' + createHash('sha256').update(`tesplay-sabr-v1\0${req.params.token}\0${spool.file}\0${total}`).digest('base64url'));
+    res.status(requested ? 206 : 200).set({ "Content-Type": item.contentType || "video/mp4", "Accept-Ranges": "bytes", "Cache-Control": "private, no-store", "Content-Length": String(end - start + 1), ...(requested ? { "Content-Range": `bytes ${start}-${end}/${total}` } : {}) });
     if (req.method === "HEAD") return res.end();
     try {
-      for await (const chunk of spool.read(controller.signal)) {
+      for await (const chunk of spool.read(controller.signal, start, end)) {
         if (!res.write(chunk)) await new Promise(resolve => res.once("drain", resolve));
         if (res.destroyed) return;
       }

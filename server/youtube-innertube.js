@@ -157,10 +157,10 @@ export function rawTvPage(data) {
 /** Choose a progressive H.264 video stream at or below the ceiling plus an AAC audio stream. */
 export function chooseStreams(streamingData, { maxHeight = 1080 } = {}) {
   const formats = [...(streamingData?.adaptive_formats || []), ...(streamingData?.formats || [])].filter(f => f && typeof f.mime_type === 'string' && !f.drm_families?.length && !f.is_type_otf);
-  // Like the YouTube TV app on a car screen: the tallest H.264 track at or below the ceiling,
-  // preferring 30 fps over 60 fps (half the decode work on the Tesla's MCU for the same picture).
+  // Like the YouTube TV app on a car screen: 30 fps tracks before 60 fps ones (half the decode
+  // work on the Tesla's MCU), then the tallest at or below the ceiling.
   const videos = formats.filter(f => f.has_video && !f.has_audio && /avc1/i.test(f.mime_type) && (f.height || 0) <= maxHeight && (f.url || f.signature_cipher || f.cipher))
-    .sort((a, b) => (b.height || 0) - (a.height || 0) || Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.bitrate || 0) - (a.bitrate || 0));
+    .sort((a, b) => Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0));
   // Videos with dubs carry several AAC tracks; the original language comes first, then the
   // track YouTube marks default, never auto-dubbed, described or DRC variants.
   const audios = formats.filter(f => f.has_audio && !f.has_video && /mp4a/i.test(f.mime_type) && (f.url || f.signature_cipher || f.cipher) && !f.is_descriptive && !f.is_auto_dubbed && (f.audio_channels || 2) <= 2)
@@ -518,24 +518,29 @@ export function createInnertubeService({
         return { serverAbrStreamingUrl: await yt.session.player.decipher(fresh.streaming_data.server_abr_streaming_url), videoPlaybackUstreamerConfig: fresh.player_config.media_common_config.media_ustreamer_request_config.video_playback_ustreamer_config };
       };
       const pot = await poToken(yt.session.context.client.visitorData).catch(() => undefined);
-      const stream = new SabrStream({
-        videoId, serverAbrStreamingUrl, videoPlaybackUstreamerConfig: config, formats: streamingData.adaptive_formats.map(buildSabrFormat),
-        clientInfo: { clientName, clientVersion }, ...(pot ? { poToken: pot } : {}), callbacks: { onReloadPlayerResponse: reload },
-      });
-      stream.on('error', error => { log.warn?.(`YouTube SABR ${videoId}: ${error.message}`); void session.video.fail(error); void session.audio.fail(error); });
-      stream.on('formatInitialization', track => log.info?.(`YouTube SABR ${videoId}: server sends itag ${track.formatId?.itag} ${track.mimeType || ''}`));
-      stream.on('streamProtectionStatusUpdate', status => { if (status?.status && status.status !== 1) log.warn?.(`YouTube SABR ${videoId}: stream protection status ${status.status} (a proof-of-origin token may be required).`); });
-      session.abortStream = () => stream.abort();
-      const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || '') && (f.height || 0) <= maxHeight).sort((a, b) => (b.height || 0) - (a.height || 0) || Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || '') && (f.height || 0) <= maxHeight).sort((a, b) => Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0))[0];
       const aac = formats => formats.filter(f => f.hasAudio && /mp4a/i.test(f.mimeType || '') && (f.numChannels || 2) <= 2 && !f.isDescriptive && !f.isAutoDubbed)
         .sort((a, b) => audioRank(a) - audioRank(b) || processed(a) - processed(b) || (b.bitrate || 0) - (a.bitrate || 0))[0];
-      const { videoStream, audioStream, selectedFormats } = stream.start({ videoFormat: h264, audioFormat: aac, enabledTrackTypes: EnabledTrackTypes.VIDEO_AND_AUDIO, isPostLiveDvr: false });
-      if (!selectedFormats.videoFormat || !selectedFormats.audioFormat) { await stream.abort(); throw providerError('YouTube offered no H.264 and AAC tracks for adaptive streaming.', 422); }
-      const audio = selectedFormats.audioFormat;
-      log.info?.(`YouTube SABR ${videoId}: video itag ${selectedFormats.videoFormat.itag} ${selectedFormats.videoFormat.height || ''}p, audio itag ${audio.itag} ${Math.round((audio.averageBitrate || audio.bitrate || 0) / 1000)}k${audio.language ? ` ${audio.language}` : ''}${audio.isOriginal ? ' original' : ''}${audio.isDrc ? ' drc' : ''}${audio.isVb ? ' voice-boost' : ''}.`);
-      const spool = (readable, target) => readable.pipeTo(new WritableStream({ write: chunk => target.write(chunk), close: () => target.finish(), abort: reason => target.fail(reason) })).catch(error => target.fail(error));
-      Promise.all([spool(videoStream, session.video), spool(audioStream, session.audio)]).then(() => { session.finished = true; }).catch(() => {});
-      return { video: selectedFormats.videoFormat, audio: selectedFormats.audioFormat };
+      const formats = streamingData.adaptive_formats.map(buildSabrFormat);
+      const video = h264(formats), audio = aac(formats);
+      if (!video || !audio) throw providerError('YouTube offered no H.264 and AAC tracks for adaptive streaming.', 422);
+      log.info?.(`YouTube SABR ${videoId}: video itag ${video.itag} ${video.height || ''}p, audio itag ${audio.itag} ${Math.round((audio.averageBitrate || audio.bitrate || 0) / 1000)}k${audio.language ? ` ${audio.language}` : ''}${audio.isOriginal ? ' original' : ''}${audio.isDrc ? ' drc' : ''}${audio.isVb ? ' voice-boost' : ''}.`);
+      // One SABR stream at a time; a reader that needs data elsewhere restarts it at that time.
+      const launch = async (startTimeMs) => {
+        const stream = new SabrStream({
+          videoId, serverAbrStreamingUrl, videoPlaybackUstreamerConfig: config, formats, stripDuplicateInit: true,
+          clientInfo: { clientName, clientVersion }, ...(pot ? { poToken: pot } : {}), callbacks: { onReloadPlayerResponse: reload },
+        });
+        const handle = { ended: false, abort: async () => { handle.ended = true; await stream.abort().catch(() => {}); } };
+        stream.on('streamProtectionStatusUpdate', status => { if (status?.status && status.status !== 1) log.warn?.(`YouTube SABR ${videoId}: stream protection status ${status.status} (a proof-of-origin token may be required).`); });
+        stream.on('error', error => { handle.ended = true; log.warn?.(`YouTube SABR ${videoId}: ${error.message}`); if (!session.video.layout) { void session.video.fail(error); void session.audio.fail(error); } });
+        stream.on('finish', () => { handle.ended = true; });
+        const { videoStream, audioStream } = stream.start({ videoFormat: video, audioFormat: audio, enabledTrackTypes: EnabledTrackTypes.VIDEO_AND_AUDIO, isPostLiveDvr: false, startTimeMs });
+        const pipe = (readable, target) => readable.pipeTo(new WritableStream({ write: chunk => target.ingest(chunk) })).catch(() => {}).finally(() => { handle.ended = true; });
+        void pipe(videoStream, session.video); void pipe(audioStream, session.audio);
+        return handle;
+      };
+      return { selected: { video, audio }, launch };
     });
     return { sabr: session, video: { spool: session.video }, audio: { spool: session.audio }, isLive: false, via: 'innertube-sabr', title: text(info.basic_info?.title) };
   }
