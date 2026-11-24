@@ -24,7 +24,7 @@ export const allServices = [
     color: "#ff4949",
     letters: "▶",
     description:
-      "Play a video link, or connect your Google account or a YouTube API key to search here.",
+      "Sign in with your phone for your Home feed, subscriptions, playlists and history.",
   },
   {
     id: "drive",

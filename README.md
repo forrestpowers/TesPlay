@@ -47,7 +47,7 @@ Connect **Plex · Xtream Codes · M3U · Google Drive · Stremio addons · YouTu
 | M3U IPTV | Playlist import and grouped channels | Your own authorized playlist; XMLTV guide import is not implemented |
 | Google Drive | OAuth, folder browsing and streaming supported media | Your Google OAuth web client and enabled Drive API |
 | Stremio addons | Account/QR linking or configured addon links, catalogs, search, episodes and direct HTTP(S)/HLS sources | Authorized addons and any access they require; raw torrents and DRM sources are unsupported |
-| YouTube | Home feed, subscriptions, watch history, search, channels, playlists and TesPlayer playback (720p30 by default) | Google TV OAuth client for “Sign in on this screen” (InnerTube), or a Data API key / web OAuth client; optional yt-dlp resolver as playback fallback |
+| YouTube | Home feed, subscriptions, watch history, search, channels, playlists and TesPlayer playback (720p30 by default) | A Google account, signed in with a code on your phone (no Google Cloud setup); optional yt-dlp resolver as playback fallback |
 | Radio | Station search, favorites and audio playback | A reachable, compatible station stream |
 
 Service availability, codecs, provider quotas and simultaneous-stream limits still apply. Native Crunchyroll, Jellyfin/Emby adapters, DRM playback and general screen mirroring are not implemented. Existing server-folder and Plex connections remain supported, but Local/SMB and Plex are not offered as new connections in the UI, and Crunchyroll is no longer listed.
@@ -239,7 +239,7 @@ docker compose --profile youtube --profile tunnel up -d --build
 
 YouTube playback first tries YouTube's own InnerTube API through the bundled `youtubei.js` client, which needs no extra service: it picks the best H.264 track at or below 1080p plus AAC audio and proxies both as re-chunked byte ranges to TesPlayer. Public videos work without any sign-in; a signed-in connection (below) is tried first. The yt-dlp resolver below is the fallback for videos InnerTube cannot resolve. Live broadcasts play through the signed-in connection, relayed segment by segment from the server; without sign-in they use the yt-dlp resolver over HLS.
 
-The resolver runs privately on the Compose network and does not publish a host port. Browsing needs either **Sign in on this screen** (below) or your own YouTube Data API key / Google web OAuth client. With a Data API client, YouTube account watch history and Home recommendations are not available.
+The resolver runs privately on the Compose network and does not publish a host port. Browsing needs a signed-in connection (below).
 
 For a native install, install [yt-dlp with its default extras](https://github.com/yt-dlp/yt-dlp#installation), set `YOUTUBE_ENABLED=true` in `.env` and restart the server. Set `YT_DLP_PATH` if needed. The Docker resolver version is pinned through `YT_DLP_VERSION` in `.env.example`; upstream changes can require updating it. Restricted or unresolved videos may fail.
 
@@ -253,7 +253,7 @@ docker compose --profile youtube --profile pot up -d --build
 
 The provider (`brainicism/bgutil-ytdlp-pot-provider`) stays on the internal Compose network and needs no configuration. Where even that is refused (Oracle Cloud, for one), a signed-in connection plays anyway: its player request as the TV app (at the older TV version that still returns plain stream URLs) gets H.264 and AAC URLs the server streams by byte range. Should that stop, the signed-in connection falls back to YouTube's own adaptive protocol (SABR): the server spools the tracks and serves them by byte range, with seeking and the full duration; see [deployment notes](docs/deployment.md#youtube-sabr-playback-signed-in-any-address).
 
-Google Drive and YouTube OAuth require your own Google web client, the relevant enabled API and exact redirect URIs: `https://media.example.com/api/drive/callback` and `https://media.example.com/api/youtube/callback`. Configure clients through Connections or the installation-level `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. See [Google OAuth setup](docs/deployment.md#google-drive-oauth).
+Google Drive requires your own Google web client, the Drive API and the exact redirect URI `https://media.example.com/api/drive/callback`. Configure clients through Connections or the installation-level `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. See [Google OAuth setup](docs/deployment.md#google-drive-oauth).
 
 </details>
 
@@ -264,10 +264,10 @@ Google Drive and YouTube OAuth require your own Google web client, the relevant 
 
 This mode browses YouTube the way the YouTube TV app does, signed in to your Google account, so the YouTube hub shows your real **Home** feed, the newest uploads from every subscription, your account **watch history**, quota-free search, channel pages and playlists. Signing in works like a TV: TesPlay shows a short code and `google.com/device`; you enter the code on your phone. Nothing is typed on the car screen, no Google Cloud project and no redirect URL are needed.
 
-1. In TesPlay, add or edit **YouTube**, choose **Sign in on this screen** and save.
-2. Press **Sign in with Google on this screen**, open `google.com/device` on your phone (or scan the QR code) and enter the code. The screen updates by itself once Google approves.
+1. In TesPlay, open the **YouTube** tab, or choose **Connect YouTube** in Connections.
+2. Open `google.com/device` on your phone (or scan the QR code) and enter the code shown. The screen updates by itself once Google approves.
 
-By default TesPlay signs in with the OAuth client of YouTube's own TV app, which it reads from `youtube.com/tv`, the same way `youtubei.js` and similar sites do. If you prefer your own client, create one of type **TVs and Limited Input devices** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with the YouTube Data API v3 enabled, and either set `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET` in `.env` or paste it into the connection. Refresh tokens are stored encrypted with the connection and refreshed server-side. Choose **Sign out of Google** in the same editor to revoke them. The Data API modes (API key or web OAuth client) keep working as before. See [deployment notes](docs/deployment.md#youtube-sign-in-on-this-screen-innertube) for limits and caveats.
+By default TesPlay signs in with the OAuth client of YouTube's own TV app, which it reads from `youtube.com/tv`, the same way `youtubei.js` and similar sites do. A server owner who prefers their own client can create one of type **TVs and Limited Input devices** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and set `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET` in `.env`; the app no longer asks for one. Refresh tokens are stored encrypted with the connection and refreshed server-side. Choose **Sign out of Google** when editing the connection to revoke them. The app no longer offers the YouTube Data API (API key or web OAuth client); a connection saved that way keeps working until it is edited, and saving it switches it to phone sign-in. See [deployment notes](docs/deployment.md#youtube-sign-in-on-this-screen-innertube) for limits and caveats.
 
 </details>
 

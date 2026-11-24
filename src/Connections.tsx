@@ -44,8 +44,7 @@ export default function Connections({
     [servers, setServers] = useState<PlexServer[] | null>(null),
     [profiles, setProfiles] = useState<PlexProfile[] | null>(null);
   const [editing, setEditing] = useState<Connection | null>(null);
-  // A new YouTube connection starts on the phone sign-in page; the form is for the Data API or a custom client.
-  const [youtubeForm, setYoutubeForm] = useState(false);
+  // A new YouTube connection is made on the phone sign-in page, not in the connection form.
   const youtubeCreated = useRef<Connection | null>(null);
   const [categoryConnection, setCategoryConnection] = useState<Connection | null>(null);
   const [editConfig, setEditConfig] = useState<Record<string, string>>({});
@@ -68,7 +67,6 @@ export default function Connections({
   }, [preview]);
   const phoneLink = `${publicUrl}/?view=connections&phone=1`;
   function beginAdd(type: string) {
-    setYoutubeForm(false);
     youtubeCreated.current = null;
     // The YouTube sign-in replaces the whole page; start it at the top.
     if (type === 'youtube') window.scrollTo({ top: 0 });
@@ -95,7 +93,6 @@ export default function Connections({
   }
   function close() {
     setAdding(null);
-    setYoutubeForm(false);
     youtubeCreated.current = null;
     setEditing(null);
     setEditConfig({});
@@ -214,16 +211,10 @@ export default function Connections({
     close();
     if (created) onBrowse(created);
   }, [onRefresh, onBrowse, pendingYouTube]);
-  if (adding === 'youtube' && !editing && !youtubeForm && !preview) return (
+  if (adding === 'youtube' && !editing && !preview) return (
     <section className="page-section youtube-hub">
       <button className="text-button youtube-signin-back" onClick={close}><ArrowLeft size={16} /> Back to connections</button>
       <YouTubeSignIn connection={pendingYouTube} canManage onSignedIn={youtubeSignedIn} onCreateConnection={createYouTube} />
-      <p className="youtube-signin-alt">Prefer the YouTube Data API or your own Google OAuth client? <button className="text-button" onClick={() => {
-        // The sign-in page already saved a connection; edit that one instead of adding another.
-        const existing = youtubeCreated.current || pendingYouTube;
-        setYoutubeForm(true);
-        if (existing) void editConnection(existing);
-      }}>Use the connection form</button></p>
     </section>
   );
   return (
@@ -288,7 +279,7 @@ export default function Connections({
       {adding === "stremio" && <Suspense fallback={<Busy label="Opening Stremio…"/>}><StremioConnectionDialog connection={editing} preview={preview} onClose={close} onSignIn={onSignIn} onChanged={onRefresh}/></Suspense>}
       {adding && adding !== "stremio" && <ConnectionEditor key={`${editing?.id || 'new'}:${adding}`} adding={adding} editing={editing} editConfig={editConfig} configuredFields={configuredFields}
         preview={preview} busy={busy} error={error} notice={notice} publicUrl={publicUrl} plexPin={plexPin}
-        managedGoogle={capabilities.googleConfigured||!capabilities.canUseLocal} googleConfigured={capabilities.googleConfigured} googleTvConfigured={capabilities.googleTvConfigured} startGoogle={startGoogle}
+        managedGoogle={capabilities.googleConfigured||!capabilities.canUseLocal} googleConfigured={capabilities.googleConfigured} startGoogle={startGoogle}
         onRefresh={async () => { await onRefresh(); if (editing) { const saved = await api<{ connection: Connection }>(`/connections/${editing.id}/config`).catch(() => null); if (saved) setEditing(saved.connection); } }}
         onClose={close} onSignIn={onSignIn} onPhoneSetup={() => setPhoneSetup(true)} onTypeChange={setAdding}
         onSubmit={submit} startPlex={startPlex} checkPlex={checkPlex}/>}

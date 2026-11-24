@@ -15,7 +15,7 @@ import type { PlexPin } from './plex-connection';
 
 export type ConnectionFormOptions = { playlist: string; youtubeMode: YouTubeAuthMode; loadedCategories?:IptvSelection };
 
-export default function ConnectionEditor({ adding, editing, editConfig, configuredFields, preview, busy, error, notice, publicUrl, plexPin, managedGoogle=false,googleConfigured=false,googleTvConfigured=false,startGoogle,onRefresh,
+export default function ConnectionEditor({ adding, editing, editConfig, configuredFields, preview, busy, error, notice, publicUrl, plexPin, managedGoogle=false,googleConfigured=false,startGoogle,onRefresh,
   onClose: close, onSignIn, onPhoneSetup, onTypeChange, onSubmit, startPlex, checkPlex }: {
   adding: string;
   editing: Connection | null;
@@ -29,7 +29,6 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
   plexPin: PlexPin | null;
   managedGoogle?:boolean;
   googleConfigured?:boolean;
-  googleTvConfigured?:boolean;
   startGoogle?:()=>Promise<void>;
   onRefresh?:()=>Promise<void>;
   onClose: () => void;
@@ -42,7 +41,8 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
 }) {
   const [playlist, setPlaylist] = useState('');
   const [showPlexAdvanced,setShowPlexAdvanced]=useState(false);
-  const [youtubeMode, setYoutubeMode] = useState<YouTubeAuthMode>(() => editing ? youtubeAuthMode(editConfig, configuredFields) : 'apiKey');
+  // YouTube connects only by signing in on this screen; saving an older Data API connection switches it over.
+  const [youtubeMode] = useState<YouTubeAuthMode>(() => adding === 'youtube' ? 'innertube' : editing ? youtubeAuthMode(editConfig, configuredFields) : 'apiKey');
   const connectionFields = fieldsFor(adding, youtubeMode);
   const youtubeDevice = adding === 'youtube' && youtubeMode === 'innertube';
 
@@ -103,7 +103,8 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
           {newIptv && <div className="iptv-setup-progress" aria-label={`Step ${categoryStep ? 2 : 1} of 2`}>
             <span className={!categoryStep ? 'current' : ''}>1 · Connection details</span><ArrowRight size={14}/><span className={categoryStep ? 'current' : ''}>2 · Categories</span>
           </div>}
-          {!categoryStep && new URLSearchParams(location.search).get("phone") !== "1" && (
+          {/* YouTube has nothing to type but its name; its sign-in already happens on the phone. */}
+          {!categoryStep && adding !== 'youtube' && new URLSearchParams(location.search).get("phone") !== "1" && (
             <button
               className="button ghost full"
               onClick={() => {
@@ -174,51 +175,24 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
               {!showPlexAdvanced&&notice&&<p className="form-help" role="status">{notice}</p>}
             </div>
           )}
-          {adding === 'youtube' && (
-            <div className="segmented connection-mode youtube-signin-mode">
-              <button type="button" className={youtubeMode === 'innertube' ? 'selected' : ''} onClick={() => setYoutubeMode('innertube')}>Sign in on this screen</button>
-              <button type="button" className={youtubeMode !== 'innertube' ? 'selected' : ''} onClick={() => setYoutubeMode(managedGoogle ? 'oauth' : 'apiKey')}>Data API</button>
-            </div>
-          )}
           {youtubeDevice && (
             <p className="form-help">
-              Browses YouTube the way the YouTube TV app does: your real Home feed, subscriptions, playlists and watch history, with no Data API quota and no Google Cloud setup. You get a short code to enter at google.com/device on your phone.
-              {googleTvConfigured ? ' This server also has its own Google TV OAuth client configured.' : ' Optionally use your own OAuth client of type “TVs and Limited Input devices” instead.'}
+              Browses YouTube the way the YouTube TV app does: your real Home feed, subscriptions, playlists and watch history. You get a short code to enter at google.com/device on your phone.
               {!editing && ' Save first; the sign-in code appears next.'}
             </p>
           )}
           {youtubeDevice && editing && <YouTubeDeviceSignIn connectionId={editing.id} signedIn={!!editing.oauthAuthorized && editing.authMode === 'innertube'} onChanged={async () => { await onRefresh?.(); }} />}
-          {managedGoogle&&adding==='youtube'&&youtubeMode==='innertube'?null:managedGoogle&&['drive','youtube'].includes(adding)&&<div className="plex-signin"><p>{adding==='drive'?'Connect your Google account to browse your videos.':'Connect your Google account for subscriptions and playlists.'}</p><button className="button primary full" disabled={busy||!googleConfigured} onClick={()=>void startGoogle?.()}>Sign in with Google <ArrowUpRight size={17}/></button>{!googleConfigured&&<p className="form-help">Google sign-in is not configured on this server yet.</p>}{error&&<p className="form-error" role="alert">{error}</p>}</div>}
-          {!managedGoogle&&adding === "youtube" && youtubeMode !== 'innertube' && (
-            <div className="segmented connection-mode">
-              <button
-                type="button"
-                className={youtubeMode === "apiKey" ? "selected" : ""}
-                onClick={() => setYoutubeMode("apiKey")}
-              >
-                API key
-              </button>
-              <button
-                type="button"
-                className={youtubeMode === "oauth" ? "selected" : ""}
-                onClick={() => setYoutubeMode("oauth")}
-              >
-                Google sign-in
-              </button>
-            </div>
-          )}
-          {!managedGoogle&&(adding === "drive" ||
-            (adding === "youtube" && youtubeMode === "oauth")) && (
+          {managedGoogle&&adding==='drive'&&<div className="plex-signin"><p>{adding==='drive'?'Connect your Google account to browse your videos.':'Connect your Google account for subscriptions and playlists.'}</p><button className="button primary full" disabled={busy||!googleConfigured} onClick={()=>void startGoogle?.()}>Sign in with Google <ArrowUpRight size={17}/></button>{!googleConfigured&&<p className="form-help">Google sign-in is not configured on this server yet.</p>}{error&&<p className="form-error" role="alert">{error}</p>}</div>}
+          {!managedGoogle&&adding === "drive" && (
             <p className="form-help">
-              Create a web OAuth client in Google Cloud and enable the{" "}
-              {adding === "drive" ? "Drive" : "YouTube Data"} API. Add{" "}
+              Create a web OAuth client in Google Cloud and enable the Drive
+              API. Add{" "}
               <code>
                 {publicUrl}/api/{adding}/callback
               </code>{" "}
               as a redirect URL. Save here, then authorize your Google
               account. Authorization is remembered until you revoke access
               or the provider requires it again.
-              {adding === "youtube" && " Google sign-in unlocks your subscriptions, playlists and channel feed. An API key can only browse public videos. YouTube does not expose account watch history or Home recommendations through this API."}
             </p>
           )}
           {adding === "local" && (
@@ -234,13 +208,13 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
               Choose your categories in the next step.
             </p>
           )}
-          {editing && (
+          {editing && adding !== 'youtube' && (
             <p className="form-help">
               Saved credentials stay hidden. Leave a saved field empty to
               keep its current value.
             </p>
           )}
-          {!(managedGoogle&&['drive','youtube'].includes(adding)&&!youtubeDevice)&&!(adding==='plex'&&!editing&&!showPlexAdvanced)&&<form ref={formRef} onSubmit={submitForm} key={`${editing?.id || "new"}:${adding}`} onChange={event => {
+          {!(managedGoogle&&adding==='drive')&&!(adding==='plex'&&!editing&&!showPlexAdvanced)&&<form ref={formRef} onSubmit={submitForm} key={`${editing?.id || "new"}:${adding}`} onChange={event => {
             if (newIptv && event.target instanceof HTMLInputElement && event.target.name && event.target.name !== 'name') invalidateCategories();
           }}>
             <div className="connection-details-fields" hidden={categoryStep}>
