@@ -395,6 +395,17 @@ test(
     ).json();
     assert.equal(playback.type, "hls");
     assert.ok(!JSON.stringify(playback).includes("provider-secret"));
+    // Server audio conversion switches the live channel to the provider's continuous stream.
+    const converted = await (
+      await f.request(`/api/playback?connectionId=${id}&itemId=7&kind=live&compatibility=audio`)
+    ).json();
+    assert.equal(converted.type, "video");
+    assert.equal(converted.streamKind, "continuous-ts");
+    assert.equal(converted.compatibility, "audio");
+    assert.equal(converted.isLive, true);
+    assert.ok(!JSON.stringify(converted).includes("provider-secret"));
+    assert.equal((await f.request(`/api/playback?connectionId=${id}&itemId=7&kind=live&compatibility=video`)).status, 400);
+    assert.equal((await f.request(`/api/playback?connectionId=${id}&itemId=41&kind=movie&compatibility=audio`)).status, 400);
     const master = await (await f.request(playback.url)).text();
     assert.equal(await (await f.request(playback.url)).text(), master);
     assert.ok(!master.includes("provider-secret"));

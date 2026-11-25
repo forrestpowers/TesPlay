@@ -102,14 +102,14 @@ docker compose logs app
 <details>
 <summary><strong>Storage and Docker defaults</strong></summary>
 
-SQLite and the encryption key persist in the `aperture-data` Docker volume. The `./media` folder is mounted read-only at `/media`. Docker includes FFmpeg/FFprobe for temporary phone-video conversion. Keep the host running while you use TesPlay.
+SQLite and the encryption key persist in the `aperture-data` Docker volume. The `./media` folder is mounted read-only at `/media`. Docker includes FFmpeg/FFprobe for temporary phone-video conversion and for converting the audio of live channels that carry only AC-3. Keep the host running while you use TesPlay.
 
 </details>
 
 <details>
 <summary><strong>Prefer Node.js? Install without Docker</strong></summary>
 
-Use **Node.js 22.13 or newer**, npm and Git. Install FFmpeg/FFprobe separately if you want phone-video conversion. Node's built-in SQLite may print an experimental-feature notice on some supported versions.
+Use **Node.js 22.13 or newer**, npm and Git. Install FFmpeg/FFprobe separately if you want phone-video conversion or playback of live IPTV channels whose only audio track is AC-3 (set `FFMPEG_PATH` when it is not on the PATH). Node's built-in SQLite may print an experimental-feature notice on some supported versions.
 
 ```sh
 git clone https://github.com/rdvnit/TesPlay.git

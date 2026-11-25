@@ -90,13 +90,16 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const setupQueue = useRef<Promise<void>>(Promise.resolve());
   const options = useRef({ resume, item, plexCompatibility });
   options.current = { resume, item, plexCompatibility };
+  const adapterRef = useRef<Awaited<ReturnType<typeof createTesPlayAdapter>> | null>(null);
   const error = (reason: unknown) => {
     const typed = reason as { code?: string };
     const unavailable = reason instanceof Error && reason.message === 'Canvas playback is unavailable.';
     if (typed?.code === 'STALE_OPERATION' || (reason instanceof DOMException && reason.name === 'AbortError')) return;
     // Engine errors are already sanitized. Avoid showing raw fetch URLs or credentials.
     console.warn('[TesPlayer] playback error', typed?.code ?? '', reason instanceof Error ? reason.message : reason, (reason as { safeCause?: string })?.safeCause ?? '');
-    const text = reason instanceof TesPlaySourceError ? reason.message : unavailable ? 'This browser does not support TesPlayer canvas playback. Use an updated browser with WebCodecs enabled.' : typed?.code ? `Playback could not continue (${typed.code}${reason instanceof Error && reason.message ? `: ${reason.message}` : ''}). ${playback.provider === 'plex' ? 'Try again or choose Plex compatibility for this title.' : 'Reopen this title or try another stream.'}` : 'This source could not play. Check its connection and browser codec support, then try again.';
+    // A codec the browser cannot decode surfaces as an exhausted recovery; name the real cause instead.
+    const unsupported = adapterRef.current?.compatibilityFailure;
+    const text = reason instanceof TesPlaySourceError ? reason.message : unavailable ? 'This browser does not support TesPlayer canvas playback. Use an updated browser with WebCodecs enabled.' : unsupported && ['RECOVERY_EXHAUSTED','DEMUX_FAILED','DECODE_FAILED'].includes(typed?.code || '') ? `${unsupported} Try another channel.` : typed?.code ? `Playback could not continue (${typed.code}${reason instanceof Error && reason.message ? `: ${reason.message}` : ''}). ${playback.provider === 'plex' ? 'Try again or choose Plex compatibility for this title.' : 'Reopen this title or try another stream.'}` : 'This source could not play. Check its connection and browser codec support, then try again.';
     if(playback.provider==='plex' && ['DEMUX_FAILED','NETWORK_TIMEOUT','RECOVERY_EXHAUSTED','DECODE_FAILED'].includes(typed?.code||'') && retries.current<2){
       if(retryPending.current)return;retryPending.current=true;retries.current++;
       progress.current(lastPosition.current,lastDuration.current);setBusy(true);setMessage('Reconnecting to your stream');
@@ -112,6 +115,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     let didComplete = false;
     let lastSavedPhase = '';
     retryPending.current=false;
+    adapterRef.current = null;
     setSnapshot(null); setBusy(true); setFailed(false); setMessage('Getting your stream ready');
     setLocalCues([]); setLocalCaptions(false);
     const save = (completed = false, stopped = false) => {
@@ -130,6 +134,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
         if (controller.signal.aborted) return;
         if (!capabilities.canvas2d || (playback.type !== 'audio' && !capabilities.webCodecs.videoDecoder)) throw new Error('Canvas playback is unavailable.');
         const adapter = await createTesPlayAdapter(playback, options.current.item, controller.signal, options.current.plexCompatibility);
+        adapterRef.current = adapter;
         if (controller.signal.aborted || !canvas.current) return;
         const audioContext = getAudioContext();
         active = createTesPlayerEngine({ canvas: canvas.current, capabilities, services: adapter.services, audioContext, dependencies: { fetch: tesPlayFetch },

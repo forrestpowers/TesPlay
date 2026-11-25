@@ -72,7 +72,7 @@ export type Library = {
 };
 export type Preferences = { autoPlayNext: boolean; hideYouTubeShorts?: boolean };
 export type PlayerPreferences = { audioLanguage: string | null; subtitleLanguage: string | null; subtitlesEnabled: boolean; qualityId: 'auto' | '1080p' | '720p' | '480p' };
-export type PlaybackSettings = { audioTrackId?: string; subtitleTrackId?: string; qualityId?: string; compatibility?: boolean; startOver?: boolean; sourceId?: string };
+export type PlaybackSettings = { audioTrackId?: string; subtitleTrackId?: string; qualityId?: string; compatibility?: boolean; audioRemux?: boolean; startOver?: boolean; sourceId?: string };
 export type PlaybackChoice = { id: string; label: string; language?: string; codec?: string; selected?: boolean };
 export type StreamChoice = { id: string; label: string; description?: string; addon: string; unavailable?: boolean; unavailableReason?: string };
 export type PlaybackOptions = { item?: MediaItem; audio: PlaybackChoice[]; subtitles: PlaybackChoice[]; qualities: PlaybackChoice[]; sources?: StreamChoice[]; note?: string };
@@ -82,6 +82,7 @@ export type Playback = {
   url: string;
   type: "hls" | "video" | "audio" | "external";
   streamKind?: "direct-file" | "continuous-ts" | "dual-input" | "growing-fmp4";
+  compatibility?: "audio";
   audioUrl?: string;
   isLive?: boolean;
   message?: string;

@@ -1073,6 +1073,12 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       const c = connection(req, req.query.connectionId);
       const id = String(req.query.itemId || "");
       const kind = String(req.query.kind || "movie");
+      // Server audio conversion (AC-3 to AAC) needs a continuous MPEG-TS
+      // source and is offered for live channels only.
+      const compatibility = req.query.compatibility === undefined ? null : String(req.query.compatibility);
+      if (compatibility !== null && compatibility !== "audio") throw providerError("Choose a valid compatibility option.");
+      if (compatibility === "audio" && kind !== "live") throw providerError("Audio conversion is available for live channels only.");
+      const remux = compatibility === "audio" ? { remux: "audio" } : {};
       if (c.type === "xtream") {
         if (!IPTV_KINDS.includes(kind === "episode" ? "series" : kind)) throw iptvOnDemandOff();
         let category, extension, streamId;
@@ -1080,7 +1086,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           await ensureXtream(req,c,"live",id);
           category = "live";
           streamId = numeric(id);
-          extension = c.config.output === "ts" ? "ts" : "m3u8";
+          extension = c.config.output === "ts" || compatibility === "audio" ? "ts" : "m3u8";
         } else if (kind === "episode") {
           const match = /^(\d+):(\d+):([a-zA-Z0-9]{1,8})$/.exec(id);
           if (!match) throw providerError("Invalid episode.");
@@ -1116,9 +1122,11 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
             url: u.toString(),
             allowedPrivateHosts: privateHosts(c.config.url),
             kind: type,
+            ...remux,
           }),
           type,
           streamKind: extension === "ts" ? "continuous-ts" : "direct-file",
+          ...(compatibility === "audio" ? { compatibility, isLive: true } : {}),
         });
       }
       if (c.type === "m3u") {
@@ -1126,13 +1134,17 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
         if (!entry) throw providerError("Channel not found.", 404);
         ensure(req,c,{type:"live",category:entry.category || '__ungrouped__'});
         const type = /\.m3u8(?:\?|$)/i.test(entry.url) ? "hls" : "video";
+        if (compatibility === "audio" && type === "hls")
+          throw providerError("Audio conversion needs a continuous stream; this channel is an HLS playlist.");
         return res.json({
           url: media.register(req, c, {
             url: entry.url,
             allowedPrivateHosts: c.config.url ? privateHosts(c.config.url) : [],
+            ...remux,
           }),
           type,
-          streamKind: /\.ts(?:\?|$)/i.test(entry.url) ? "continuous-ts" : "direct-file",
+          streamKind: compatibility === "audio" || /\.ts(?:\?|$)/i.test(entry.url) ? "continuous-ts" : "direct-file",
+          ...(compatibility === "audio" ? { compatibility, isLive: true } : {}),
         });
       }
       if (c.type === "local") {
