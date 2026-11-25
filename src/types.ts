@@ -52,6 +52,8 @@ export type Connection = {
   shared?: boolean;
   access?: Grant;
   loadedCategories?: string[] | null;
+  /** IPTV only: whether the server offers the provider's movies and series (IPTV_ON_DEMAND). */
+  onDemand?: boolean;
 };
 export type Grant = { connectionId: string; kinds: string[]; sections: string[] | null; categories: string[] | null };
 export type Starred = { connectionId: string; kind: "channel" | "category" | "section"; id: string; title: string };

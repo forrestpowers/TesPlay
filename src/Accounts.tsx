@@ -6,6 +6,7 @@ import type { Connection, Grant } from './types';
 import PlaybackDefaultsFields from './PlaybackDefaultsFields';
 import { defaultPlayerPreferences } from './player-preferences';
 type Account={id:string;name:string;email:string|null;username:string;role:'owner'|'member';disabled:boolean;grants:Grant[]};
+const kindsFor=(c:Connection)=>c.type==='xtream'&&!c.onDemand?['live']:kinds[c.type];
 const kinds:Record<string,string[]>={stremio:['movie','series'],plex:['movie','series','audio'],xtream:['movie','series','live'],m3u:['live'],youtube:['video'],drive:['video','audio'],local:['video','audio']};
 const labels:Record<string,string>={movie:'Movies',series:'TV shows',live:'Live TV',video:'Videos',audio:'Music & audio'};
 export default function Accounts({connections,onToast}:{connections:Connection[];onToast:(s:string)=>void}) {
@@ -27,7 +28,7 @@ export default function Accounts({connections,onToast}:{connections:Connection[]
   },[editing,connections]);
   const edit=(value:Account|'new')=>{setEditing(value);setName(value==='new'?'':value.name);setUsername(value==='new'?'':value.username);setPassword('');setExpanded(null);setGrants(value==='new'?[]:value.grants);setPlaybackDefaults(defaultPlayerPreferences);setError('');};
   const update=(id:string,value:Partial<Grant>)=>setGrants(g=>g.map(x=>x.connectionId===id?{...x,...value}:x));
-  const toggle=(c:Connection)=>setGrants(g=>g.some(x=>x.connectionId===c.id)?g.filter(x=>x.connectionId!==c.id):[...g,{connectionId:c.id,kinds:kinds[c.type]||['video'],sections:null,categories:null}]);
+  const toggle=(c:Connection)=>setGrants(g=>g.some(x=>x.connectionId===c.id)?g.filter(x=>x.connectionId!==c.id):[...g,{connectionId:c.id,kinds:kindsFor(c)||['video'],sections:null,categories:null}]);
   const confirm = (account:Account,action:'toggle'|'delete') => { setError(''); setConfirmation({account,action}); };
   const applyConfirmation = async () => {
     if (!confirmation || saving) return;
@@ -73,7 +74,7 @@ export default function Accounts({connections,onToast}:{connections:Connection[]
         {editing==='new'&&<PlaybackDefaultsFields value={playbackDefaults} onChange={setPlaybackDefaults} disabled={saving}/>}
         <fieldset className="grant-list"><legend>Shared connections</legend>{connections.map(c=>{const grant=grants.find(g=>g.connectionId===c.id),field=c.type==='plex'?'sections':'categories';return <div className={`connection-grant ${grant?'selected':''}`} key={c.id}>
           <div className="connection-grant-row"><button type="button" className="connector-choice" aria-pressed={!!grant} aria-label={`Share ${c.name}`} onClick={()=>toggle(c)}><ConnectorLogo type={c.type}/><span><strong>{c.type==='youtube'?'YouTube':c.name}</strong><small>{grant?'Shared with this account':'Not shared'}</small></span></button><button type="button" className="grant-permissions" disabled={!grant} aria-expanded={expanded===c.id} onClick={()=>setExpanded(expanded===c.id?null:c.id)}>Permissions <ChevronDown size={15}/></button></div>
-          {grant&&expanded===c.id&&<div className="grant-details"><div className="grant-kinds">{(kinds[c.type]||[]).map(k=><label className="check-label" key={k}><input type="checkbox" checked={grant.kinds.includes(k)} onChange={e=>update(c.id,{kinds:e.target.checked?[...grant.kinds,k]:grant.kinds.filter(x=>x!==k)})}/>{labels[k]}</label>)}</div>
+          {grant&&expanded===c.id&&<div className="grant-details"><div className="grant-kinds">{(kindsFor(c)||[]).map(k=><label className="check-label" key={k}><input type="checkbox" checked={grant.kinds.includes(k)} onChange={e=>update(c.id,{kinds:e.target.checked?[...grant.kinds,k]:grant.kinds.filter(x=>x!==k)})}/>{labels[k]}</label>)}</div>
             {['plex','xtream','m3u'].includes(c.type)&&<><label className="check-label"><input type="checkbox" checked={grant[field]===null} onChange={e=>update(c.id,{[field]:e.target.checked?null:[]})}/>All {c.type==='plex'?'Plex libraries':'categories'}</label>{grant[field]!==null&&<div className="grant-options">{options[c.id]?.length?options[c.id].map(o=><label className="check-label" key={o.id}><input type="checkbox" checked={grant[field]?.includes(o.id)||false} onChange={e=>update(c.id,{[field]:e.target.checked?[...(grant[field]||[]),o.id]:(grant[field]||[]).filter(x=>x!==o.id)})}/>{o.name}</label>):<p className="form-help">Library choices are unavailable. Retry after checking the connection.</p>}</div>}</>}
           </div>}
         </div>;})}</fieldset>

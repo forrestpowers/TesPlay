@@ -43,7 +43,7 @@ Connect **Plex · Xtream Codes · M3U · Google Drive · Stremio addons · YouTu
 | Source | Supported capabilities | What you bring |
 | --- | --- | --- |
 | Plex | Libraries, collections, Plex Home selection, Watchlist, progress sync and compatible playback/transcoding | A reachable Plex server and authorized account |
-| Xtream Codes IPTV | Live TV, short EPG, movies, series and selectable categories | Your legally authorized provider URL and credentials |
+| Xtream Codes IPTV | Live TV, short EPG and selectable categories (movies and series are off by default because most are H.265; `IPTV_ON_DEMAND=1` turns them on) | Your legally authorized provider URL and credentials |
 | M3U IPTV | Playlist import and grouped channels | Your own authorized playlist; XMLTV guide import is not implemented |
 | Google Drive | OAuth, folder browsing and streaming supported media | Your Google OAuth web client and enabled Drive API |
 | Stremio addons | Account/QR linking or configured addon links, catalogs, search, episodes and direct HTTP(S)/HLS sources | Authorized addons and any access they require; raw torrents and DRM sources are unsupported |

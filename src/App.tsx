@@ -181,6 +181,13 @@ export default function App() {
     onToast: showToast,
   });
   const library = useMemo(() => filterLibraryForYouTubeVisibility(rawLibrary, hideYouTubeShorts, connections), [rawLibrary, hideYouTubeShorts, connections]);
+  // Movies and Series only appear when a connected library can fill them: IPTV offers live
+  // channels only, so Drive (and older Plex or Stremio connections) are what is left.
+  const hiddenDestinations = useMemo(() => {
+    const types = new Set(connections.map(c => c.type === 'xtream' && c.onDemand ? 'xtream-on-demand' : c.type));
+    const any = (...wanted: string[]) => wanted.some(type => types.has(type));
+    return [...(any('plex', 'stremio', 'drive', 'local', 'xtream-on-demand') ? [] : ['movies']), ...(any('plex', 'stremio', 'xtream-on-demand') ? [] : ['series'])];
+  }, [connections]);
   useEffect(() => {
     setHistoryLimit(HISTORY_PAGE_SIZE);
   }, [view, libraryIdentity]);
@@ -615,7 +622,7 @@ export default function App() {
   return (
     <MediaDetailsContext.Provider value={{onDetails:inspect,onPlay:open}}><div className="app-shell" data-navigation-overlay={view === "home" && !searchOpen && !controllerRoom}>
       {controllerRoom&&<div className="remote-casting-bar" role="status"><Smartphone size={16}/><span>Select a video to play on your paired screen</span><button className="text-button" onClick={()=>navigate('remote')}>Controls</button><button className="text-button" onClick={()=>setControllerRoom('')}>Disconnect</button></div>}
-      <Navigation view={view} phone={phone} signedIn={signedIn} searchOpen={searchOpen} profileOpen={profileOpen} onNavigate={navigate}
+      <Navigation view={view} phone={phone} signedIn={signedIn} searchOpen={searchOpen} profileOpen={profileOpen} hidden={hiddenDestinations} onNavigate={navigate}
         onSearch={()=>{setSearchOpen(value=>!value);if(searchOpen){setSearch('');setQuery('');}}}
         onRemote={()=>signedIn?navigate('remote'):signIn()} onProfile={()=>setProfileOpen(true)} onSignIn={signIn}/>
       {searchOpen && (

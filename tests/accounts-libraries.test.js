@@ -8,6 +8,8 @@ import http from 'node:http';
 import {createApp} from '../server/index.js';
 import {createStore} from '../server/store.js';
 import {hashPassword} from '../server/security.js';
+// These tests cover IPTV movies and series, which are off unless switched on.
+process.env.IPTV_ON_DEMAND = '1';
 const password='test password for libraries';
 async function fixture(t,dependencies={}) {
   const dataDir=await mkdtemp(join(tmpdir(),'tesplay-accounts-'));

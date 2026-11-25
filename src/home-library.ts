@@ -49,7 +49,8 @@ export async function loadHomeConnection(c: Connection, request: Request, signal
       } while (!signal.aborted);
     } else if (c.type === 'xtream') {
       const loaded = (id:string) => !Array.isArray(c.loadedCategories) || c.loadedCategories.includes(id);
-      const kinds = ['movie', 'series'].filter(k=>(!c.access||c.access.kinds.includes(k)) && (!Array.isArray(c.loadedCategories)||c.loadedCategories.some(id=>id.startsWith(`${k}:`)))), names = kinds.map(k=>({movie:'Movies',series:'Series'}[k]!));
+      // Movies and series only when the server offers them (most are H.265, which the car cannot decode).
+      const kinds = ['movie', 'series'].filter(k=>c.onDemand && (!c.access||c.access.kinds.includes(k)) && (!Array.isArray(c.loadedCategories)||c.loadedCategories.some(id=>id.startsWith(`${k}:`)))), names = kinds.map(k=>({movie:'Movies',series:'Series'}[k]!));
       collect(await Promise.allSettled(kinds.map(k => catalog(k))), names, (r, index) => shelf(kinds[index], `${c.name} · ${names[index]}`, r.items, { kind: kinds[index] }));
       const categories=stars.filter(s=>s.connectionId===c.id && s.kind==='category' && s.id.startsWith('live:') && loaded(s.id) && (!c.access || c.access.kinds.includes('live')));
       collect(await Promise.allSettled(categories.map(s=>catalog('live','',s.id))),categories.map(s=>s.title),(r,index)=>shelf(categories[index].id,`${c.name} · Live TV · ${categories[index].title}`,r.items,{kind:'live',category:categories[index].id}));

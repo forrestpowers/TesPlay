@@ -13,6 +13,10 @@ export function librarySources(connections:Connection[]):Connection[] {
 /** Preserve each source's hierarchy instead of asking its root for IPTV kinds. */
 export async function unifiedShelves(c:Connection,mode:LibraryMode,request:Request,signal:AbortSignal,force=false):Promise<LibraryShelf[]> {
   if(c.type==='youtube') return [];
+  // IPTV movies and series only when the server offers them; most are H.265.
+  if(['xtream','m3u'].includes(c.type) && mode!=='live' && !c.onDemand) return [];
+  // IPTV offers live channels only; its movies and series are mostly H.265.
+  if(['xtream','m3u'].includes(c.type) && mode!=='live') return [];
   const kind=mode==='series'?'series':mode==='live'?'live':'movie';
   const effectiveKind=['drive','local'].includes(c.type)&&kind==='movie'?'video':kind;
   if(c.access&&!c.access.kinds.includes(effectiveKind)) return [];

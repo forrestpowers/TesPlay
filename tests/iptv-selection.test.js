@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import ts from 'typescript';
 import { createApp } from '../server/index.js';
 import { createStore } from '../server/store.js';
+// These tests cover IPTV movies and series, which are off unless switched on.
+process.env.IPTV_ON_DEMAND = '1';
 
 async function fixture(t, remoteData, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'tesplay-iptv-selection-'));

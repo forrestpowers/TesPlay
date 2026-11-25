@@ -101,7 +101,7 @@ async function fixture(t, options = {}) {
     },
   };
   // InnerTube is disabled unless a test injects a fake, so no test reaches YouTube.
-  registerProviderRoutes(app, ctx, { remoteData: options.remoteData, resolveYouTube: options.resolveYouTube, innertube: options.innertube ?? null });
+  registerProviderRoutes(app, ctx, { remoteData: options.remoteData, resolveYouTube: options.resolveYouTube, innertube: options.innertube ?? null, iptvOnDemand: options.iptvOnDemand ?? true });
   app.use((err, _req, res, _next) =>
     res.status(err.status || 500).json({ error: err.message }),
   );
@@ -859,6 +859,38 @@ test("YouTube searches stay server-side and saved radio items use a durable stat
   assert.equal(radioPlayback.type, 'audio');
   assert.match(radioPlayback.url, /^\/api\/media\//);
   assert.match(stream.headers.get("location"), /^\/api\/media\//);
+});
+
+test("IPTV offers live channels only unless on-demand titles are switched on", async (t) => {
+  const calls = [];
+  const f = await fixture(t, {
+    iptvOnDemand: false,
+    remoteData: async (input) => {
+      const action = new URL(input).searchParams.get("action");
+      calls.push(action);
+      return {
+        get_live_streams: [{ stream_id: 1, name: "Channel", category_id: 4 }],
+        get_vod_streams: [{ stream_id: 2, name: "Movie", category_id: 4 }],
+        get_series: [{ series_id: 8, name: "Show", category_id: 4 }],
+        get_live_categories: [{ category_id: 4, category_name: "News" }],
+        get_vod_categories: [{ category_id: 4, category_name: "Films" }],
+        get_series_categories: [{ category_id: 4, category_name: "Drama" }],
+      }[action];
+    },
+  });
+  const id = f.add("xtream", { url: "https://iptv.example", username: "user", password: "secret" });
+  const all = await (await f.request(`/api/catalog?connectionId=${id}`)).json();
+  assert.deepEqual(all.items.map((item) => item.title), ["Channel"]);
+  assert.deepEqual(all.categories.map((x) => x.id), ["live:4"]);
+  const categories = await (await f.request(`/api/connections/${id}/categories`)).json();
+  assert.deepEqual(categories.categories.map((x) => x.id), ["live:4"]);
+  for (const kind of ["movie", "series"])
+    assert.deepEqual((await (await f.request(`/api/catalog?connectionId=${id}&kind=${kind}`)).json()).items, []);
+  assert.deepEqual((await (await f.request(`/api/catalog?connectionId=${id}&parentId=8`)).json()).items, []);
+  const movie = await f.request(`/api/playback?connectionId=${id}&itemId=2&kind=movie`);
+  assert.equal(movie.status, 404);
+  assert.match((await movie.json()).error, /movies and series are not available/);
+  assert.ok(!calls.some((action) => /vod|series/.test(action)), "on-demand lists are never fetched from the provider");
 });
 
 test("Xtream category IDs stay distinct across live, movies and series, including category zero", async (t) => {

@@ -29,7 +29,7 @@ function Grid({items:rawItems,props,onOpen}:{items:MediaItem[];props:Props;onOpe
 function SearchBox({query,onChange,children}:{query:string;onChange:(s:string)=>void;children?:React.ReactNode}) {return <div className="library-search"><div className="inline-search"><Search size={18}/><input aria-label="Search this library" value={query} placeholder="Search this library…" onChange={e=>onChange(e.target.value)}/></div>{children}</div>;}
 
 export function SourceBrowser({connection:c,initialParent,initialKind='all',initialCategory='',props,onBack}:{connection:Connection;initialParent?:MediaItem;initialKind?:string;initialCategory?:string;props:Props;onBack?:()=>void}) {
-  const [kind,setKind]=useState(initialKind==='all'&&c.type==='xtream'?(c.access?.kinds.find(k=>['live','movie','series'].includes(k))||'live'):initialKind);
+  const [kind,setKind]=useState(initialKind==='all'&&c.type==='xtream'?(c.onDemand&&c.access?.kinds.find(k=>['live','movie','series'].includes(k))||'live'):initialKind);
   const [folders,setFolders]=useState<MediaItem[]>(initialParent?[initialParent]:[]),[category,setCategory]=useState(initialCategory);
   const [draft,setDraft]=useState(props.query),[query,setQuery]=useState(props.query),[page,setPage]=useState(1),[tokens,setTokens]=useState<string[]>([]),[refresh,setRefresh]=useState(0);
   const [result,setResult]=useState<CatalogResult>({items:[]}),[categories,setCategories]=useState<{id:string;name:string}[]>([]),[busy,setBusy]=useState(true),[error,setError]=useState('');
@@ -52,7 +52,7 @@ export function SourceBrowser({connection:c,initialParent,initialKind='all',init
   return <div className="library-layout">
     <aside className="library-sidebar" aria-label={`${c.name} categories`}>
       <div className="sidebar-label">{c.name}</div>
-      {c.type==='xtream'&&!parent&&kinds.filter(([id])=>!c.access||c.access.kinds.includes(id)).map(([id,title,Icon])=><button key={id} className={`sidebar-link ${kind===id?'selected':''}`} onClick={()=>{setKind(id);setCategories([]);choose('');setDraft('');}}><Icon size={18}/>{title}</button>)}
+      {c.type==='xtream'&&c.onDemand&&!parent&&kinds.filter(([id])=>!c.access||c.access.kinds.includes(id)).map(([id,title,Icon])=><button key={id} className={`sidebar-link ${kind===id?'selected':''}`} onClick={()=>{setKind(id);setCategories([]);choose('');setDraft('');}}><Icon size={18}/>{title}</button>)}
       <div className="sidebar-label">{parent?'Browse':'Categories'}</div>
       <button className={`sidebar-link ${!category?'selected':''}`} onClick={()=>choose('')}>All {parent?'episodes':kind==='live'?'channels':'titles'}</button>
       <div className="sidebar-categories">{ordered.map(value=><div key={value.id} className="sidebar-category"><button className={`sidebar-link ${category===value.id?'selected':''}`} onClick={()=>choose(value.id)}>{value.name}</button>{!parent&&<StarsButton value={{connectionId:c.id,kind:'category',id:value.id,title:value.name}} props={props}/>}</div>)}</div>

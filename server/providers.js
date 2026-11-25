@@ -253,6 +253,11 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     return catalogCached(c, 'playlist', () => readPlaylist(c), force);
   }
   const xtreamActions = { movie: 'get_vod_streams', series: 'get_series', live: 'get_live_streams' };
+  // IPTV providers' movies and series are mostly H.265, which the car cannot decode without a
+  // transcoder, so only live channels are offered unless IPTV_ON_DEMAND=1 turns them back on.
+  const iptvOnDemand = dependencies.iptvOnDemand ?? process.env.IPTV_ON_DEMAND === '1';
+  const IPTV_KINDS = iptvOnDemand ? ['live', 'movie', 'series'] : ['live'];
+  const iptvOnDemandOff = () => providerError('IPTV movies and series are not available.', 404);
   async function xtreamCatalog(c, kind, force = false) {
     const action = xtreamActions[kind];
     const selected = c.config.loadedCategories;
@@ -633,7 +638,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       throw providerError('Enter a playlist URL or paste a playlist first.', 400);
     // Unsaved credentials and playlist data stay in this request, outside catalog persistence.
     try {
-      res.json({ categories: await iptvCategories(c, ['live', 'movie', 'series'], false, true) });
+      res.json({ categories: await iptvCategories(c, IPTV_KINDS, false, true) });
     } catch (error) {
       // Cloudflare replaces gateway responses with HTML, hiding the provider's
       // explanation. A failed draft is a setup error, not a TesPlay outage.
@@ -648,7 +653,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     route(async (req, res) => {
       const c = connection(req, req.params.id);
       if (!['xtream', 'm3u'].includes(c.type)) throw providerError('Choose an IPTV connection.', 400);
-      res.json({ categories: await iptvCategories(c, ['live', 'movie', 'series'], req.query.refresh === '1'),
+      res.json({ categories: await iptvCategories(c, IPTV_KINDS, req.query.refresh === '1'),
         loadedCategories: c.config.loadedCategories ?? null });
     }),
   );
@@ -662,6 +667,8 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       const parent = String(req.query.parentId || "");
       const force = req.query.refresh === "1";
       if (c.type === "xtream") {
+        if ((parent && !iptvOnDemand) || (kind !== "all" && !IPTV_KINDS.includes(kind)))
+          return res.json({ ...paginate([], req.query), categories: [] });
         if (parent) {
           const items = await xtreamEpisodes(req, c, parent, force);
           return res.json({
@@ -671,7 +678,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
             ),
           });
         }
-        const kinds = kind === "all" ? ["movie", "series", "live"].filter(k=>!c.access || c.access.kinds.includes(k)) : [kind];
+        const kinds = kind === "all" ? ["movie", "series", "live"].filter(k => IPTV_KINDS.includes(k)).filter(k=>!c.access || c.access.kinds.includes(k)) : [kind];
         if(kind!=="all" && c.access && !c.access.kinds.includes(kind)) throw providerError("This content type is not shared with your account.",403);
         if (kinds.some((k) => !["movie", "series", "live"].includes(k)))
           throw providerError("Unsupported IPTV catalog.");
@@ -989,6 +996,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
 
   async function seriesEpisodes(req, c, id, kind) {
     if (c.type === "xtream") {
+      if (!IPTV_KINDS.includes('series')) return [];
       const seriesId = kind === 'series' ? numeric(id) : /^(\d+):\d+:[a-zA-Z0-9]{1,8}$/.exec(id)?.[1];
       if (!seriesId) throw providerError("Invalid series or episode.");
       return xtreamEpisodes(req, c, seriesId);
@@ -1066,6 +1074,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       const id = String(req.query.itemId || "");
       const kind = String(req.query.kind || "movie");
       if (c.type === "xtream") {
+        if (!IPTV_KINDS.includes(kind === "episode" ? "series" : kind)) throw iptvOnDemandOff();
         let category, extension, streamId;
         if (kind === "live") {
           await ensureXtream(req,c,"live",id);

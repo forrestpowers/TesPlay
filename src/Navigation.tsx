@@ -11,6 +11,8 @@ type Props = {
   signedIn: boolean;
   searchOpen: boolean;
   profileOpen?: boolean;
+  /** Destinations with nothing to show for the connected libraries. */
+  hidden?: readonly string[];
   onNavigate: (view: NavigationView) => void;
   onSearch: () => void;
   onRemote: () => void;
@@ -27,7 +29,7 @@ const destinations = [
   { view: 'list', label: 'My List', Icon: Bookmark },
 ] as const;
 
-export default function Navigation({ view, phone, signedIn, searchOpen, profileOpen = false, onNavigate, onSearch, onRemote, onProfile, onSignIn }: Props) {
+export default function Navigation({ view, phone, signedIn, searchOpen, profileOpen = false, hidden = [], onNavigate, onSearch, onRemote, onProfile, onSignIn }: Props) {
   const [expanded, setExpanded] = useState(false);
   const root = useRef<HTMLElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -89,7 +91,7 @@ export default function Navigation({ view, phone, signedIn, searchOpen, profileO
       }}><UserRound aria-hidden="true" /></button>
     </nav>
     <nav ref={dock} className="navigation-dock glass-bar glass-dock" aria-label="Main navigation" data-glass-current={mainCurrent}>
-      {destinations.map(({ view: next, label, Icon }) => <button type="button" key={next} className="navigation-icon" data-navigation-key={next} data-glass-active={mainCurrent === next} aria-label={label} title={label} aria-current={view === next ? 'page' : undefined} onClick={() => navigate(next)}><Icon aria-hidden="true" /><span className="navigation-label" aria-hidden="true">{label}</span></button>)}
+      {destinations.filter(destination => !hidden.includes(destination.view)).map(({ view: next, label, Icon }) => <button type="button" key={next} className="navigation-icon" data-navigation-key={next} data-glass-active={mainCurrent === next} aria-label={label} title={label} aria-current={view === next ? 'page' : undefined} onClick={() => navigate(next)}><Icon aria-hidden="true" /><span className="navigation-label" aria-hidden="true">{label}</span></button>)}
     </nav>
   </header>;
 }

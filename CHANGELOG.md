@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- IPTV shows live TV only: its movies and series (mostly H.265, which the car cannot play without transcoding) are gone from Home, the IPTV library, category setup and sharing. `IPTV_ON_DEMAND=1` brings them back. The Movies and Series tabs appear only when a connected library can fill them.
 - Stremio is no longer offered for new connections for now (Home, Connections and the sign-in page); existing Stremio connections keep working.
 - Tapping a YouTube video plays it straight away; the details page with audio, subtitle and quality choices is gone for YouTube, which has nothing to choose there.
 - Faster starts: signed-in YouTube links are no longer test-read before playback, the first bytes of each track are fetched while the answer travels to the player, resolved links are reused for up to 30 minutes, and the signed-in player client is prepared when the YouTube tab opens. The app's scripts and styles are served compressed (brotli or gzip) with year-long caching, the player code loads in the background after sign-in, and player preferences are requested alongside the stream instead of before it.

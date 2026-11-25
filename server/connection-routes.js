@@ -91,8 +91,11 @@ export function createConnectionContext(store) {
 }
 
 export function registerConnectionRoutes(app, { store, ctx, requireOwner }) {
+  // IPTV movies and series are mostly H.265, which the car cannot decode; they are offered
+  // only when the server sets IPTV_ON_DEMAND=1, and the app hides them otherwise.
+  const iptvOnDemand = process.env.IPTV_ON_DEMAND === "1";
   app.get("/api/connections", (req, res) =>
-    res.json({ connections: store.visibleConnections(req.user.id) }),
+    res.json({ connections: store.visibleConnections(req.user.id).map(c => c.type === "xtream" ? { ...c, onDemand: iptvOnDemand } : c) }),
   );
   app.get("/api/connections/:id/config", requireOwner, (req, res) => {
     const { config, ...connection } = ctx.getManagedConnection(req, req.params.id);

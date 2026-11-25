@@ -6,7 +6,7 @@ const source = ts.transpileModule(fs.readFileSync(new URL('../src/home-library.t
 const { loadHomeConnection, homeFeatures } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 const connection = (type, id = type) => ({ id, name: type, type, configured: true });
 const item = (id, type = 'movie', c = 'plex') => ({ id, title: id, type, connectionId: c, source: c });
-test('IPTV Home bundles account previews, keeps highlights balanced, and skips unselected kinds and stars', async () => {
+test('IPTV Home bundles account previews, keeps highlights balanced, and skips unselected stars', async () => {
   const {bundleIptvHomeShelves} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
   const first = {...connection('xtream','first'),loadedCategories:['movie:1']}, second = connection('xtream','second');
   const rows = [first,second].map(c => ({id:c.id,connectionId:c.id,title:c.id,kind:'movie',items:[item('same','movie',c.id),item('other','movie',c.id)]}));
@@ -15,7 +15,7 @@ test('IPTV Home bundles account previews, keeps highlights balanced, and skips u
   assert.deepEqual(homeFeatures(bundled).map(i=>i.connectionId),['first','second','first','second']);
   const paths=[];
   await loadHomeConnection(first,async path=>{paths.push(path);return{items:[]};},new AbortController().signal,[{connectionId:first.id,kind:'category',id:'live:1',title:'News'}]);
-  assert.equal(paths.length,1);assert.equal(new URL(paths[0],'https://tesplay.test').searchParams.get('kind'),'movie');
+  assert.deepEqual(paths,[],'no movie or series previews, and a starred category outside the loaded selection is skipped');
 });
 test('Plex home previews expand library sections and retain healthy libraries when another fails', async () => {
   const paths = [];
@@ -32,14 +32,17 @@ test('Plex home previews expand library sections and retain healthy libraries wh
   assert.match(result.issues[0], /shows.*Provider unavailable/);
   assert.deepEqual(homeFeatures(result.shelves).map(i => i.title), ['Actual film']);
 });
-test('IPTV home requests only starred live categories alongside recent movie and series previews', async () => {
+test('IPTV home requests only starred live categories, without movie or series previews', async () => {
   const seen=[];
   const result=await loadHomeConnection(connection('xtream'),async path=>{
     const p=new URL(path,'https://tesplay.test').searchParams;seen.push([p.get('kind'),p.get('category')]);assert.equal(p.get('sort'),'recent');
     if(p.get('kind')==='series')throw Error('Unavailable');return {items:[item(p.get('category')||p.get('kind'),p.get('kind'),'xtream')]};
   },new AbortController().signal,[{connectionId:'xtream',kind:'category',id:'live:20',title:'Favourites'},{connectionId:'other',kind:'category',id:'live:90',title:'Other connection'}]);
-  assert.deepEqual(seen,[['movie',''],['series',''],['live','live:20']]);
-  assert.deepEqual(result.shelves.map(s=>s.kind),['movie','live']);assert.equal(result.shelves[1].category,'live:20');assert.equal(result.issues.length,1);
+  assert.deepEqual(seen,[['live','live:20']]);
+  assert.deepEqual(result.shelves.map(s=>s.kind),['live']);assert.equal(result.shelves[0].category,'live:20');assert.equal(result.issues.length,0);
+  const onDemand=[];
+  await loadHomeConnection({...connection('xtream'),onDemand:true},async path=>{onDemand.push(new URL(path,'https://tesplay.test').searchParams.get('kind'));return {items:[]};},new AbortController().signal);
+  assert.deepEqual(onDemand,['movie','series'],'with IPTV_ON_DEMAND the server offers them and Home previews them');
   const empty=await loadHomeConnection(connection('m3u'),()=>{throw Error('No unstarred channels should be requested');},new AbortController().signal);
   assert.deepEqual(empty.shelves,[]);assert.deepEqual(empty.issues,[]);
 });
