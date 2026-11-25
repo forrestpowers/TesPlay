@@ -45,5 +45,5 @@ export const allServices = [
   },
 ];
 
-/** Providers offered for new connections. Plex is no longer offered; existing Plex connections keep working. */
-export const services = allServices.filter((service) => service.id !== "plex");
+/** Providers offered for new connections. Plex and Stremio are not offered for now; existing connections keep working. */
+export const services = allServices.filter((service) => service.id !== "plex" && service.id !== "stremio");

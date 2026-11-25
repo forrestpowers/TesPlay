@@ -68,7 +68,7 @@ export default function AuthScreen({
           <span className="eyebrow">Made for the Tesla browser</span>
           <h1>Your collection.<br />On the big screen.</h1>
           <p>Your films, shows and live channels, together in your Tesla. Sign in once and keep your libraries close.</p>
-          <div className="auth-library-strip" aria-label="Supported libraries"><span>Plex</span><span>IPTV</span><span>YouTube</span><span>Drive</span><span>Stremio</span></div>
+          <div className="auth-library-strip" aria-label="Supported libraries"><span>IPTV</span><span>YouTube</span><span>Drive</span></div>
           <div className="auth-caption"><span className="auth-caption-line" /><span>Pick a story. Press play.</span></div>
         </div>
         <div className="auth-card">

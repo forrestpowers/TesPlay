@@ -117,7 +117,7 @@ export default function Home({ cacheIdentity, connections, library: rawLibrary, 
         {connected && shelves.filter(s => s.items.length).map(shelf => <Row key={shelf.id} title={shelf.title} items={shelf.items} onOpen={onOpen} onFavorite={onFavorite} isSaved={i => favorites.has(itemKey(i))} progress={i => progress.get(itemKey(i))} more={() => viewAll(shelf)} />)}
         {library.favorites.length > 0 && <Row title="My list" items={library.favorites} onOpen={onOpen} onFavorite={onFavorite} isSaved={i => favorites.has(itemKey(i))} more={() => onNavigate('list')} />}
         <div className="discovery-row"><button onClick={() => onNavigate('apps')} className="discovery-card"><YouTubeLogo /><div><span className="small-caps">YouTube</span><h3>Your channels, on this screen</h3><p>Browse subscriptions or play a video link</p></div><ArrowUpRight size={20} /></button></div>
-        {canManage && !connections.length && <div className="connect-banner"><div><Cable size={24} /><div><h3>Add your first library</h3><p>Connect IPTV, YouTube, Google Drive or Stremio</p></div></div><button className="button ghost" onClick={() => onNavigate('connections')}>Add a connection <Plus size={18} /></button></div>}
+        {canManage && !connections.length && <div className="connect-banner"><div><Cable size={24} /><div><h3>Add your first library</h3><p>Connect IPTV, YouTube or Google Drive</p></div></div><button className="button ghost" onClick={() => onNavigate('connections')}>Add a connection <Plus size={18} /></button></div>}
       </div>
     </>}
   </>;
