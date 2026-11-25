@@ -7,6 +7,7 @@ import { realpath, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { createAudioRemuxer } from "./audio-remux.js";
 
 // Pool by origin AND the validated DNS address. A later DNS answer cannot
 // reuse a socket to an address that the current request did not authorize.
@@ -320,6 +321,7 @@ export const mediaTypes = {
 };
 
 export function createMediaService(ctx) {
+  const remuxer = ctx.audioRemuxer || createAudioRemuxer();
   const resources = new Map();
   const socketOwners = new WeakMap();
   const watchedSockets = new WeakSet();
@@ -526,6 +528,48 @@ export function createMediaService(ctx) {
           socket.once("close", () => socketOwners.get(socket)?.sockets?.delete(socket));
         }
       };
+      // Live channels whose only audio track the browser cannot decode: the
+      // provider's continuous stream is opened here with the usual validation,
+      // then piped through FFmpeg, which copies the video and re-encodes only
+      // the audio to AAC. The client receives one continuous MPEG-TS stream.
+      if (item.remux === "audio") {
+        const upstream = await requestRemote(item.url, {
+          headers, allowedPrivateHosts: item.allowedPrivateHosts,
+          timeout: 45000, signal: controller.signal, onSocket: retainSocket,
+        });
+        if (upstream.statusCode >= 400) {
+          upstream.resume();
+          return res.status(502).json({ error: `Media provider returned HTTP ${upstream.statusCode}.` });
+        }
+        const contentType = String(upstream.headers["content-type"] || "application/octet-stream");
+        if (!/^(?:video\/|audio\/|application\/octet-stream(?:;|$))/i.test(contentType)) {
+          upstream.destroy();
+          throw providerError("The provider returned an unsupported media response.", 502);
+        }
+        res.status(200).setHeader("Content-Type", "video/mp2t");
+        if (req.method === "HEAD") { upstream.destroy(); return res.end(); }
+        let job;
+        try { job = remuxer.start({ input: upstream, signal: controller.signal }); }
+        catch (error) { upstream.destroy(); throw error; }
+        let sent = 0;
+        job.output.on("data", (chunk) => { sent += chunk.length; });
+        // The response ends from the exit handler, so an empty conversion can still report its error.
+        job.output.pipe(res, { end: false });
+        // A conversion that never produces output is stuck on the provider.
+        const watchdog = setTimeout(() => { if (!sent) job.stop(); }, 20000);
+        res.once("close", () => { clearTimeout(watchdog); job.stop(); });
+        job.exit.then(({ error, code, stderr }) => {
+          clearTimeout(watchdog);
+          if (res.writableFinished || controller.signal.aborted) return;
+          if (sent) return res.end();
+          const missing = error?.code === "ENOENT";
+          // FFmpeg only sees pipes, so its output names no provider URL or credential.
+          if (!missing) console.warn(`Audio conversion ended (exit ${code ?? error?.code ?? "?"}): ${stderr.trim().slice(0, 500)}`);
+          if (res.headersSent) return res.destroy();
+          res.status(missing ? 503 : 502).json({ error: missing ? "Audio conversion requires FFmpeg on the server." : "This channel's audio could not be converted." });
+        });
+        return;
+      }
       let upstream = await requestRemote(item.url, {
         headers,
         allowedPrivateHosts: item.allowedPrivateHosts,

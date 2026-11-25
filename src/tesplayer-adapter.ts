@@ -40,6 +40,8 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
   const selectedQuality = playback.settings?.qualityId || 'auto';
   let fileTracks: MediaTrack[] | undefined;
   let representationId:string|undefined;
+  let audioRemuxed = playback.compatibility === 'audio';
+  let compatibilityFailure: string | undefined;
   async function prepare(p: Playback, qualityId = 'auto', operationSignal = signal, audioId = selectedAudio, useDefaults = false): Promise<PlaybackSession> {
     for (const raw of [p.url, p.audioUrl, ...(p.subtitles || []).map(track => track.url)]) {
       if (!raw) continue;
@@ -170,9 +172,31 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
       operationSignal.throwIfAborted();checkGeneration(sessionId,generation);
       root=replacement;current=session;return session;
     },
-    requestCompatibility: async (sessionId, mode, _reason, operationSignal, _seek, generation) => {
+    requestCompatibility: async (sessionId, mode, reason, operationSignal, _seek, generation) => {
       checkGeneration(sessionId, generation);
-      if (!item.connectionId || root.provider !== 'plex' || compatible || mode === 'subtitle-extract') throw new Error('This source needs a supported codec. Plex titles can use Plex compatibility mode.');
+      if (mode === 'audio-only' && !audioRemuxed && item.connectionId && item.type === 'live' && ['xtream','m3u'].includes(item.providerType || '')) {
+        // The browser cannot decode this channel's audio (typically AC-3 only). Switch to the
+        // server's audio conversion, releasing the current stream first so the provider's
+        // connection allowance is not used twice.
+        release();
+        let replacement: Playback;
+        try { replacement = await api<Playback>(playbackPath(item,{...root.settings,audioRemux:true}), undefined, undefined, operationSignal); }
+        catch (error) {
+          operationSignal.throwIfAborted();
+          compatibilityFailure = `${reason}. ${error instanceof Error && error.message ? error.message : 'Audio conversion is unavailable for this channel.'}`;
+          throw new TesPlaySourceError(compatibilityFailure);
+        }
+        replacement.settings = {...root.settings,audioRemux:true};
+        const session = await prepare(replacement, 'auto', operationSignal);
+        operationSignal.throwIfAborted();
+        checkGeneration(sessionId, generation);
+        audioRemuxed = true; root = replacement; current = session;
+        return session;
+      }
+      if (!item.connectionId || root.provider !== 'plex' || compatible || mode === 'subtitle-extract') {
+        if (mode !== 'subtitle-extract') compatibilityFailure = `${reason}. ${mode === 'audio-only' ? 'Server audio conversion is available for live IPTV channels only.' : 'This source has no compatibility mode; Plex titles can use Plex compatibility mode.'}`;
+        throw new Error(compatibilityFailure || 'This source needs a supported codec. Plex titles can use Plex compatibility mode.');
+      }
       const replacement = await api<Playback>(playbackPath(item,{...root.settings,audioTrackId:selectedAudio?.startsWith('plex-audio-')?selectedAudio:root.settings?.audioTrackId,compatibility:true}), undefined, undefined, operationSignal);
       replacement.settings={...root.settings,compatibility:true};
       const session = await prepare(replacement, 'auto', operationSignal);
@@ -184,5 +208,5 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
       return session;
     },
   };
-  return { session: current, services };
+  return { session: current, services, get compatibilityFailure() { return compatibilityFailure; } };
 }
