@@ -3,7 +3,7 @@ import { RefreshButton } from "./components";
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Info, Check, Plus, ArrowUpRight, Cable } from 'lucide-react';
 import { api } from './api';
-import { Busy, Card, Empty, Row, YouTubeLogo } from './components';
+import { Busy, Card, Empty, Row, YouTubeLogo, isYouTubeItem } from './components';
 import { services } from './catalog';
 import { itemKey } from './types';
 import type { Connection, Library, MediaItem } from './types';
@@ -82,7 +82,7 @@ export default function Home({ cacheIdentity, connections, library: rawLibrary, 
           <p>{hero.description || (hero.type === 'series' ? 'Explore the episodes in your collection.' : `Ready to watch from ${hero.source}.`)}</p>
           <div className="hero-actions">
             <button className="button primary" onClick={() => onOpen(hero)}><Play size={18} fill="currentColor" />{hero.type === 'series' ? 'Play series' : hero.type === 'live' ? 'Watch live' : 'Play now'}</button>
-            <button className="button ghost" onClick={() => onDetails(hero)}><Info size={18} />More info</button>
+            {!isYouTubeItem(hero) && <button className="button ghost" onClick={() => onDetails(hero)}><Info size={18} />More info</button>}
           </div>
         </div>
         <div className="hero-bottom">

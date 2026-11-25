@@ -16,6 +16,7 @@ import {
 import { allServices } from "./catalog";
 import { RefreshCw } from "lucide-react";
 import type { MediaItem } from "./types";
+export const isYouTubeItem = (item: MediaItem) => item.providerType === "youtube" || item.source === "YouTube";
 export const MediaDetailsContext = createContext<{onDetails:(item:MediaItem)=>void;onPlay:(item:MediaItem)=>void}|null>(null);
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
@@ -151,8 +152,10 @@ export function Card({
   presentation?: "continue";
 }) {
   const details = useContext(MediaDetailsContext);
-  const hasDetails = !!details && (["movie","series","episode","video"].includes(item.type) || item.type === "folder" && !!item.seriesId);
-  const youtube = item.providerType === "youtube" || item.source === "YouTube";
+  const youtube = isYouTubeItem(item);
+  // A YouTube video has nothing to choose before watching (one audio track, captions in the
+  // player, quality set by the server), so a tap plays it instead of opening the details page.
+  const hasDetails = !!details && !youtube && (["movie","series","episode","video"].includes(item.type) || item.type === "folder" && !!item.seriesId);
   const watched = item.watched || (progress !== undefined && progress >= 97);
   return (
     <article
