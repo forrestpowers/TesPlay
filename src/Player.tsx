@@ -198,7 +198,7 @@ export default function Player({
               ? "AUDIO"
               : item.source === "Open cinema"
                 ? "Open movie collection"
-                : "Video for use while parked"}
+                : ""}
           </span>
           <span>
             {ended && next && onNext ? (
