@@ -327,6 +327,7 @@ export function carModeTranscoder(url, token) {
   if (!base.pathname.endsWith("/")) base.pathname += "/";
   return {
     endpoint: new URL("transcode", base).toString(),
+    host: base.host,
     token,
     // The operator configured this address, so a LAN transcoder is allowed.
     allowedPrivateHosts: [base.hostname.replace(/^\[|\]$/g, "")],
@@ -555,19 +556,38 @@ export function createMediaService(ctx) {
         if (!transcoder) throw providerError("Car mode needs a transcoder configured on the server.", 503);
         res.status(200).setHeader("Content-Type", "video/mp2t");
         if (req.method === "HEAD") return res.end();
-        const converted = await requestRemote(transcoder.endpoint, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${transcoder.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ url: item.url, ...(item.transcodeHeight ? { height: item.transcodeHeight } : {}) }),
-          allowedPrivateHosts: transcoder.allowedPrivateHosts,
-          timeout: 60000, signal: controller.signal, onSocket: retainSocket,
-        });
+        const unavailable = (status, reason) => {
+          // Logged without the channel address, which carries provider credentials.
+          console.warn(`Car mode failed (${transcoder.host}): ${reason}`);
+          // The stream's video/mp2t type is already set; label the explanation as JSON.
+          return res.status(status).type("application/json").json({ error: `Car mode is unavailable: ${reason}` });
+        };
+        let converted;
+        try {
+          converted = await requestRemote(transcoder.endpoint, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${transcoder.token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ url: item.url, ...(item.transcodeHeight ? { height: item.transcodeHeight } : {}) }),
+            allowedPrivateHosts: transcoder.allowedPrivateHosts,
+            timeout: 60000, signal: controller.signal, onSocket: retainSocket,
+          });
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          return unavailable(502, `TesPlay cannot reach the transcoder at ${transcoder.host}. Check TRANSCODER_URL, the Pangolin resource and that the transcoder is running.`);
+        }
         if (converted.statusCode >= 400) {
           let reason = "";
           try { reason = String(JSON.parse(await readBody(converted, 4096)).error || ""); } catch { converted.destroy(); }
-          return res.status(converted.statusCode === 503 ? 503 : 502).json({
-            error: `Car mode is unavailable: ${reason || `the transcoder returned HTTP ${converted.statusCode}`}`,
-          });
+          if (converted.statusCode === 401 && !reason.includes("token")) reason = "";
+          return unavailable(converted.statusCode === 503 ? 503 : 502, reason ||
+            (converted.statusCode === 401 || converted.statusCode === 403
+              ? `the transcoder at ${transcoder.host} refused TesPlay (HTTP ${converted.statusCode}). Turn off the Pangolin login for that resource.`
+              : `the transcoder at ${transcoder.host} returned HTTP ${converted.statusCode}.`));
+        }
+        // A login page instead of video: the Pangolin resource still asks for sign-in.
+        if (!/^video\/mp2t\b/i.test(String(converted.headers["content-type"] || ""))) {
+          converted.destroy();
+          return unavailable(502, `${transcoder.host} answered with a web page instead of video. Turn off the Pangolin login for that resource and check that it points at the transcoder.`);
         }
         res.once("close", () => converted.destroy());
         converted.once("error", () => res.destroy());
@@ -612,7 +632,7 @@ export function createMediaService(ctx) {
           // FFmpeg only sees pipes, so its output names no provider URL or credential.
           if (!missing) console.warn(`Audio conversion ended (exit ${code ?? error?.code ?? "?"}): ${stderr.trim().slice(0, 500)}`);
           if (res.headersSent) return res.destroy();
-          res.status(missing ? 503 : 502).json({ error: missing ? "Audio conversion requires FFmpeg on the server." : "This channel's audio could not be converted." });
+          res.status(missing ? 503 : 502).type("application/json").json({ error: missing ? "Audio conversion requires FFmpeg on the server." : "This channel's audio could not be converted." });
         });
         return;
       }

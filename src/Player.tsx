@@ -10,7 +10,7 @@ import { errorMessage } from "./api";
 import type { MediaItem, Playback, PlaybackSettings } from "./types";
 import EpisodeSelector from "./EpisodeSelector";
 import {resolvePlayback} from "./playback-selection";
-import { readCarMode } from "./device-preferences";
+import { readCarMode, writeCarMode } from "./device-preferences";
 import TesPlayer from "./TesPlayer";
 import { idleRemotePlayback, type RemotePlayback } from "./remote-state";
 export default function Player({
@@ -192,7 +192,7 @@ export default function Player({
         {!remoteOnly&&item.type==='episode'&&<div className="player-episode-picker">{episodesLoading?<p role="status">Loading seasons and episodes…</p>:episodesError?<p className="form-error" role="alert">{episodesError}</p>:episodes.length>0&&onNext?<EpisodeSelector compact items={episodes} current={item} onSelect={onNext}/>:null}</div>}
         {error && (
           <div className="player-error" role="alert">
-            <span>{error}{remoteOnly?" Choose another title on your phone.":""}</span>{!remoteOnly&&!playback&&<button className="button ghost small" onClick={()=>setResolveAttempt(n=>n+1)}>Try again</button>}
+            <span>{error}{remoteOnly?" Choose another title on your phone.":""}</span>{!remoteOnly&&!playback&&<button className="button ghost small" onClick={()=>setResolveAttempt(n=>n+1)}>Try again</button>}{!remoteOnly&&!playback&&item.type==='live'&&['xtream','m3u'].includes(item.providerType||'')&&readCarMode()&&<button className="button ghost small" onClick={()=>{writeCarMode(null);setResolveAttempt(n=>n+1);}}>Play without car mode</button>}
           </div>
         )}
         {!remoteOnly && <footer className={`player-footer ${ended && next ? "has-next" : ""}`}>

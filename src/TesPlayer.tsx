@@ -1,6 +1,6 @@
 import { remotePlayback, type RemotePlayback } from './remote-state';
 import {playbackBufferLimits} from './playback-buffer-limits';
-import { api, tesPlayFetch } from './api';
+import { api, clearMediaError, recentMediaError, tesPlayFetch } from './api';
 import SutroIcon from "./SutroIcon";
 import LiveIndicator from "./LiveIndicator";
 import { Modal } from "./components";
@@ -115,6 +115,13 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
       retryTimer.current=setTimeout(()=>freshRetry.current(),750);return;
     }
     setMessage(text); setFailed(true); setBusy(false); reportError.current(text);
+    // Name what the server said about the failed stream (car mode, a provider refusal), not just the code.
+    const explained = ['DEMUX_FAILED','NETWORK_TIMEOUT','NETWORK_FAILED','RECOVERY_EXHAUSTED'].includes(typed?.code || '') ? recentMediaError() : null;
+    void explained?.then(detail => {
+      if (!detail) return;
+      const better = `${detail.replace(/\.?$/, '.')} ${playback.compatibility === 'video' ? 'Try again, or play without car mode.' : 'Reopen this title or try another stream.'}`;
+      setMessage(better); reportError.current(better);
+    });
   };
   useEffect(() => {
     const controller = new AbortController();
@@ -268,7 +275,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
         {busy?<LoaderCircle className="spin" size={32}/>:audioUnlockRequired?<button className="button primary" onClick={()=>void toggle()}>Enable sound</button>:null}
         <span role="status">{busy?message:audioUnlockRequired?'Tap once to enable picture and sound. Then use your phone.':failed?'Choose another title on your phone.':'Paused · Use your phone to resume.'}</span>
       </div>) : (busy || snapshot?.phase !== 'playing' || showControls) && <div className="tesplayer-overlay">
-        {busy ? <LoaderCircle className="spin" size={32} /> : failed ? <button className="button primary" onClick={() => { reportError.current('');retries.current=0;freshRetry.current(); }}>Try again</button> : audioUnlockRequired ? <button className="button primary" onClick={() => {reveal();void toggle();}}>Enable playback on this screen</button> : <button className="tesplayer-big-play" onClick={() => {reveal();void toggle();}} aria-label={snapshot?.phase === 'playing' ? 'Pause video' : snapshot?.phase === 'ended' ? 'Play again' : 'Play video'}><SutroIcon name={snapshot?.phase==='playing'?'pause':'play'}/></button>}
+        {busy ? <LoaderCircle className="spin" size={32} /> : failed ? <><button className="button primary" onClick={() => { reportError.current('');clearMediaError();retries.current=0;freshRetry.current(); }}>Try again</button>{playback.compatibility === 'video' && <button className="button ghost" onClick={() => { reportError.current('');clearMediaError();retries.current=0;writeCarMode(null);freshRetry.current(); }}>Play without car mode</button>}</> : audioUnlockRequired ? <button className="button primary" onClick={() => {reveal();void toggle();}}>Enable playback on this screen</button> : <button className="tesplayer-big-play" onClick={() => {reveal();void toggle();}} aria-label={snapshot?.phase === 'playing' ? 'Pause video' : snapshot?.phase === 'ended' ? 'Play again' : 'Play video'}><SutroIcon name={snapshot?.phase==='playing'?'pause':'play'}/></button>}
         {(snapshot?.phase!=='playing' || audioUnlockRequired)&&<span role="status">{audioUnlockRequired ? 'Your phone is ready. Tap once here to start picture and sound.' : message}</span>}
       </div>}
       {showStats && <PlaybackStats getSnapshot={getEngineSnapshot} />}

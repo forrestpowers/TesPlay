@@ -211,3 +211,33 @@ test("without a transcoder, a car-mode stream reports that it needs one", async 
   assert.match((await response.json()).error, /needs a transcoder/);
   assert.equal(received.length, 0);
 });
+
+test("car mode explains a wrong transcoder token", async (t) => {
+  const { base, path } = await proxyFor(t, (_req, res) => {
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "A valid transcoder token is required." }));
+  });
+  const response = await fetch(base + path);
+  // The player reads the explanation only from a JSON response.
+  assert.match(response.headers.get("content-type"), /application\/json/);
+  const body = await response.json();
+  assert.equal(body.error, "Car mode is unavailable: A valid transcoder token is required.");
+});
+
+test("car mode explains a login page in place of the transcoder", async (t) => {
+  const { base, path } = await proxyFor(t, (_req, res) => {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<html>Sign in to Pangolin</html>");
+  });
+  const response = await fetch(base + path);
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.match(body.error, /web page instead of video.*Pangolin login/);
+  assert.ok(!JSON.stringify(body).includes("secret"));
+});
+
+test("car mode explains an unreachable transcoder", async (t) => {
+  const { base, path } = await proxyFor(t, (req) => req.socket.destroy());
+  const body = await (await fetch(base + path)).json();
+  assert.match(body.error, /cannot reach the transcoder at 203\.0\.113\.40:4190/);
+});

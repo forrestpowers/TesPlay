@@ -14,8 +14,24 @@ export const tesPlayFetch: typeof fetch = async (input, init) => {
   const res = await fetch(input, { ...init, headers, redirect: 'manual' });
   if (res.type === 'opaqueredirect' || (res.status === 401 && !res.headers.get('content-type')?.includes('application/json')))
     throw new AccessSessionExpiredError();
+  // The player only sees a failed status; keep the server's explanation for its error message.
+  // Read the short explanation now: the player aborts a failed request at once, which also ends its body.
+  if (!res.ok && /^\/api\/(?:v1\/)?media\//.test(url.pathname) && res.headers.get('content-type')?.includes('application/json')) {
+    const text = await res.text().catch(() => '');
+    let message: string | null = null;
+    try { const body = JSON.parse(text) as { error?: unknown }; if (typeof body?.error === 'string') message = body.error.slice(0, 300); } catch { /* Not an explanation. */ }
+    lastMediaError = { at: Date.now(), message: Promise.resolve(message) };
+    return new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
+  }
   return res;
 };
+
+let lastMediaError: { at: number; message: Promise<string | null> } | null = null;
+/** The explanation the server gave for the most recent failed media request, if it was recent. */
+export function recentMediaError(maxAgeMs = 20_000): Promise<string | null> | null {
+  return lastMediaError && Date.now() - lastMediaError.at <= maxAgeMs ? lastMediaError.message : null;
+}
+export function clearMediaError(): void { lastMediaError = null; }
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?:string) { super(message); }
