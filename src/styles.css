@@ -2723,3 +2723,10 @@ form {
 .youtube-signin-alt { color:#71717a; margin:0; }
 .youtube-signin-back { display:inline-flex; align-items:center; gap:6px; }
 @media (max-width:900px) { .youtube-signin { grid-template-columns:1fr; justify-items:center; text-align:center; } .youtube-signin-steps li { text-align:left; } }
+
+/* Playback stats: a compact readout over the picture, toggled in player settings. */
+.playback-stats{position:absolute;top:10px;left:10px;z-index:5;display:grid;gap:2px;max-width:calc(100% - 20px);max-height:calc(100% - var(--player-controls-height, 132px) - 20px);overflow:hidden;padding:10px 12px;border-radius:10px;background:#000000b8;color:#fff;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;pointer-events:none}
+.playback-stats div{display:flex;justify-content:space-between;gap:16px;white-space:nowrap}
+.playback-stats span{color:#ffffffa8}
+.playback-stats b{font-weight:500;text-align:right;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:680px){.playback-stats{font-size:11px;padding:8px 10px}}

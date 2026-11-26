@@ -51,6 +51,29 @@ import {
   type SubtitleTimelineState,
 } from './subtitles.js';
 
+// TesPlay patch: half frame rate. Sources faster than 40 fps can present every
+// other frame, either from the start (halfFrameRate) or adaptively once 10% of
+// a 120-frame window misses its deadline after warm-up (adaptiveFrameRate).
+const ADAPTIVE_MIN_INTERVAL_SECONDS = 1 / 40;
+const ADAPTIVE_WARMUP_FRAMES = 60;
+const ADAPTIVE_WINDOW_FRAMES = 120;
+const ADAPTIVE_LATE_RATIO = 0.1;
+
+/**
+ * TesPlay patch: whether half frame rate leaves out this frame. Only sources
+ * faster than 40 fps are thinned; a backwards or long jump always presents.
+ */
+export function skipForHalfFrameRate(
+  frameInterval: number | null,
+  lastPresented: number | null,
+  timestamp: number,
+): boolean {
+  if (frameInterval === null || frameInterval >= ADAPTIVE_MIN_INTERVAL_SECONDS) return false;
+  if (lastPresented === null) return false;
+  const sincePresented = timestamp - lastPresented;
+  return sincePresented >= 0 && sincePresented < frameInterval * 1.5;
+}
+
 export interface PlayerEngineOptions {
   canvas: HTMLCanvasElement;
   audioContext?: AudioContext;
@@ -145,6 +168,8 @@ interface Operation {
   recoveryTask: Promise<void> | null;
   liveTimelineOffset: number | null;
   liveRefreshStarted: boolean;
+  /** TesPlay patch: this playback presents every other frame (see adaptiveFrameRate). */
+  presentHalfRate: boolean;
   readonly lastRawTimestamp: Record<'audio' | 'video', number | null>;
   readonly trackTimelineOffset: Record<'audio' | 'video', number | null>;
   readonly authorityVersions: Record<InvocationDomain, number>;
@@ -1794,6 +1819,11 @@ export class CanvasPlayerEngine implements PlayerEngine {
       }
     })();
     void this.trackTask(operation, producer).catch(() => undefined);
+    let previousSeen: number | null = null;
+    let frameInterval: number | null = null;
+    let windowFrames = 0;
+    let windowLate = 0;
+    if (this.policy.halfFrameRate) operation.presentHalfRate = true;
     try {
       for (;;) {
         const sample = await queue.shift(operation.controller.signal);
@@ -1810,11 +1840,55 @@ export class CanvasPlayerEngine implements PlayerEngine {
           this.handlePtsDiscontinuity(mediaTimestamp, start, operation);
           // Decoder preroll is needed for reference frames, not presentation.
           if (!this.state.isLive && mediaTimestamp < start) continue;
+          // TesPlay patch: estimate the source frame interval in presentation order.
+          if (previousSeen !== null) {
+            const step = mediaTimestamp - previousSeen;
+            if (step > 0 && step < 0.1)
+              frameInterval = frameInterval === null ? step : frameInterval * 0.9 + step * 0.1;
+          }
+          previousSeen = mediaTimestamp;
+          // A device that cannot keep up with a high frame rate drops late
+          // frames unevenly, which reads as choppy motion. Half rate leaves out
+          // every other frame before any waiting or drawing, on an even cadence.
+          // Sources at 40 fps or below are never thinned.
+          if (
+            operation.presentHalfRate &&
+            skipForHalfFrameRate(frameInterval, operation.lastVideoTimestamp, mediaTimestamp)
+          ) {
+            this.state.diagnostics.skippedFrames =
+              (this.state.diagnostics.skippedFrames ?? 0) + 1;
+            this.state.diagnostics.frameRateMode = 'half';
+            continue;
+          }
           const due = await this.waitUntilVideoDue(mediaTimestamp, start, operation);
           this.ensureCurrent(operation);
           const now = this.presentationNow();
           const latenessMs = (now - due) * 1000;
-          if (latenessMs > this.policy.lateFrameDropMs) {
+          const late = latenessMs > this.policy.lateFrameDropMs;
+          if (
+            this.policy.adaptiveFrameRate &&
+            !operation.presentHalfRate &&
+            frameInterval !== null &&
+            frameInterval < ADAPTIVE_MIN_INTERVAL_SECONDS &&
+            this.state.diagnostics.renderedFrames >= ADAPTIVE_WARMUP_FRAMES
+          ) {
+            windowFrames++;
+            if (late) windowLate++;
+            if (windowFrames >= ADAPTIVE_WINDOW_FRAMES) {
+              if (windowLate / windowFrames >= ADAPTIVE_LATE_RATIO) {
+                operation.presentHalfRate = true;
+                this.reportDetached(
+                  'decode',
+                  'adaptive-half-frame-rate',
+                  { lateFrames: windowLate, frames: windowFrames, sourceFps: Math.round(1 / frameInterval) },
+                  operation,
+                );
+              }
+              windowFrames = 0;
+              windowLate = 0;
+            }
+          }
+          if (late) {
             this.state.diagnostics.droppedFrames++;
             if (latenessMs > this.policy.severeLateFrameMs)
               this.reportDetached(
@@ -2823,6 +2897,7 @@ export class CanvasPlayerEngine implements PlayerEngine {
       recoveryTask: null,
       liveTimelineOffset: null,
       liveRefreshStarted: false,
+      presentHalfRate: false,
       lastRawTimestamp: { audio: null, video: null },
       trackTimelineOffset: { audio: null, video: null },
       authorityVersions: {
@@ -3448,6 +3523,8 @@ export class CanvasPlayerEngine implements PlayerEngine {
         codedHeight: null,
         renderedFrames: 0,
         droppedFrames: 0,
+        skippedFrames: 0,
+        frameRateMode: 'full',
         videoQueueDepth: 0,
         audioQueueSeconds: 0,
         audioContextState: audioContextState(this.audioContext),

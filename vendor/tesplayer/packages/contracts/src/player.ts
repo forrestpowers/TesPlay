@@ -74,6 +74,11 @@ export const PlayerPolicySchema = z.object({
   maxBufferedBytes: z.number().int().min(1_048_576).max(536_870_912),
   maxVideoFrames: z.number().int().min(2).max(240),
   maxAudioSeconds: z.number().min(0.25).max(60),
+  // TesPlay patch: present every other frame of a >40 fps source once the
+  // device misses too many frame deadlines, keeping an even 30 fps cadence.
+  adaptiveFrameRate: z.boolean().optional(),
+  // TesPlay patch: present every other frame of a >40 fps source from the start.
+  halfFrameRate: z.boolean().optional(),
 });
 
 export const DEFAULT_PLAYER_POLICY: z.infer<typeof PlayerPolicySchema> = {
@@ -98,6 +103,8 @@ export const DEFAULT_PLAYER_POLICY: z.infer<typeof PlayerPolicySchema> = {
   maxBufferedBytes: 67_108_864,
   maxVideoFrames: 12,
   maxAudioSeconds: 8,
+  adaptiveFrameRate: false,
+  halfFrameRate: false,
 };
 
 export const PlayerLoadRequestSchema = z.object({
@@ -121,6 +128,9 @@ export const PlayerDiagnosticsSchema = z.object({
   codedHeight: z.number().int().nonnegative().nullable(),
   renderedFrames: z.number().int().nonnegative(),
   droppedFrames: z.number().int().nonnegative(),
+  // TesPlay patch: frames left out on purpose by the adaptive frame rate.
+  skippedFrames: z.number().int().nonnegative().optional(),
+  frameRateMode: z.enum(['full', 'half']).optional(),
   videoQueueDepth: z.number().int().nonnegative(),
   audioQueueSeconds: z.number().nonnegative(),
   audioContextState: z.enum(['unavailable', 'suspended', 'running', 'closed']),
