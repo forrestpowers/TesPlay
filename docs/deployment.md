@@ -203,11 +203,11 @@ services:
       - no-new-privileges:true
 ```
 
-At startup the transcoder tries the GPU encoder, then the GPU's low-power encoder (the only one on some Intel chips, such as the N97), then software encoding, and logs which one it uses. `GET /health` reports it. Optional settings: `TRANSCODE_LIMIT` (simultaneous channels, default 3), `TRANSCODE_HEIGHT` (default 720), `TRANSCODE_FPS` (default 30), `TRANSCODE_VIDEO_KBPS` (default 3000), `TRANSCODER_ENCODER` (`auto`, `vaapi`, `vaapi-lp` or `software`) and `TRANSCODER_ALLOWED_PRIVATE_HOSTS` (provider hosts on a private network; refused by default).
+At startup the transcoder tries the GPU encoder, then the GPU's low-power encoder (the only one on some Intel chips, such as the N97), then software encoding, and logs which one it uses. `GET /health` reports it. Optional settings: `TRANSCODE_LIMIT` (simultaneous channels, default 3), `TRANSCODE_HEIGHT` (default size when a request names none, 720), `TRANSCODE_FPS` (default 30), `TRANSCODE_VIDEO_KBPS` (default 3000), `TRANSCODER_ENCODER` (`auto`, `vaapi`, `vaapi-lp` or `software`) and `TRANSCODER_ALLOWED_PRIVATE_HOSTS` (provider hosts on a private network; refused by default).
 
 Make the transcoder reachable from TesPlay, for example as a Pangolin resource on an existing Newt site that points at the machine's LAN address and port 4190. TesPlay calls it server to server, so that resource cannot require the Pangolin login; the token protects it instead, and a rule that allows only the TesPlay server's address adds a second check. Then set `TRANSCODER_URL` (for example `https://transcode.example.com`) and the same `TRANSCODER_TOKEN` on TesPlay and rebuild it.
 
-With both set, live Xtream channels and M3U channels with continuous `.ts` addresses show **Car mode (720p)** in the player settings. The choice is remembered per browser, so it can stay on in the car and off elsewhere. Without a transcoder configured, a car-mode request plays the channel normally.
+With both set, live Xtream channels and M3U channels with continuous `.ts` addresses show **Car mode** in the player settings: **Off**, **720p** (about 3 Mbps) or **480p** (about 1.3 Mbps, for weak mobile signal). Both sizes run at 30 fps; the bitrate scales with the picture area from `TRANSCODE_VIDEO_KBPS`. The choice is remembered per browser, so it can stay on in the car and off elsewhere. Without a transcoder configured, a car-mode request plays the channel normally.
 
 ## IPTV movies and series
 

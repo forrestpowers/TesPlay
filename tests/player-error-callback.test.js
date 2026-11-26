@@ -47,7 +47,7 @@ async function mount() {
     './TesPlayer': { default: TesPlayerStub },
     './EpisodeSelector': { default: () => null },
     './remote-state': { idleRemotePlayback: {} },
-    './device-preferences': { CAR_MODE_KEY: 'tesplay.carMode', readDevicePreference: () => false },
+    './device-preferences': { readCarMode: () => null },
   };
   const exports = {};
   vm.runInNewContext(code, {

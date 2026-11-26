@@ -8,7 +8,7 @@ export function playbackPath(item: MediaItem, settings: PlaybackSettings = {}) {
   const params = new URLSearchParams({connectionId:item.connectionId || '',itemId:item.id,kind:item.type});
   if (settings.compatibility) params.set('transcode','1');
   // Car mode also converts the audio, so it takes the place of audio conversion.
-  if (settings.carMode) params.set('compatibility','video');
+  if (settings.carMode) { params.set('compatibility','video'); params.set('carHeight',String(settings.carMode)); }
   else if (settings.audioRemux) params.set('compatibility','audio');
   if (settings.audioTrackId && settings.audioTrackId !== 'default') params.set('audioTrackId',settings.audioTrackId);
   if (settings.qualityId) params.set('qualityId',settings.qualityId);

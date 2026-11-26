@@ -9,6 +9,20 @@ import { httpError } from "./security.js";
 // resolves names or opens sockets, and nothing is written to disk.
 
 export const DEFAULT_PROFILE = Object.freeze({ height: 720, fps: 30, videoKbps: 3000, audioKbps: 128 });
+/** Output heights a request may ask for; the player offers 720p and 480p. */
+export const CAR_MODE_HEIGHTS = Object.freeze([360, 480, 540, 720, 1080]);
+
+/**
+ * The profile for one request. A requested height scales the configured
+ * bitrate with the picture area (720p at 3000 kbps gives 480p about 1330 kbps);
+ * an unknown or missing height keeps the configured profile.
+ */
+export function profileForHeight(base = DEFAULT_PROFILE, height) {
+  const requested = Number(height);
+  if (!CAR_MODE_HEIGHTS.includes(requested) || requested === base.height) return base;
+  const scale = (requested / base.height) ** 2;
+  return { ...base, height: requested, videoKbps: Math.min(20000, Math.max(300, Math.round(base.videoKbps * scale))) };
+}
 
 const input = ["-nostdin", "-hide_banner", "-loglevel", "error",
   "-protocol_whitelist", "pipe", "-f", "mpegts",
@@ -99,11 +113,11 @@ export function createTranscoder({
     // Starts FFmpeg on `input` (a readable MPEG-TS stream) and returns its
     // output stream. `stop` ends the conversion; `exit` resolves once the
     // process has finished, with its bounded stderr for logging.
-    start({ input: source, signal }) {
+    start({ input: source, signal, profile: requested = profile }) {
       if (active >= limit)
         throw httpError(503, "Too many channels are in car mode right now. Try again shortly.");
       active++;
-      const child = spawnProcess(ffmpeg, transcodeArguments({ encoder, device, profile }), {
+      const child = spawnProcess(ffmpeg, transcodeArguments({ encoder, device, profile: requested }), {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });

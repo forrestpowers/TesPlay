@@ -1,7 +1,7 @@
 import http from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { requestRemote, validateRemoteUrl } from "./media.js";
-import { createTranscoder, detectEncoder, DEFAULT_PROFILE } from "./transcoder.js";
+import { createTranscoder, detectEncoder, DEFAULT_PROFILE, profileForHeight } from "./transcoder.js";
 
 // Car-mode transcoder: a small service for a machine with a GPU (for example an
 // Intel mini PC). TesPlay posts a live channel's address; this service opens it,
@@ -52,7 +52,7 @@ async function readJson(req) {
   catch { throw Object.assign(new Error("Send a JSON body."), { status: 400 }); }
 }
 
-export function createTranscoderHandler({ token, transcoder, allowedPrivateHosts = [], request = requestRemote, log = console }) {
+export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_PROFILE, allowedPrivateHosts = [], request = requestRemote, log = console }) {
   const json = (res, status, body) => {
     if (res.headersSent) return res.destroy();
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
@@ -83,7 +83,8 @@ export function createTranscoderHandler({ token, transcoder, allowedPrivateHosts
         upstream.destroy();
         return json(res, 502, { error: "The provider returned an unsupported media response." });
       }
-      const job = transcoder.start({ input: upstream, signal: controller.signal });
+      // The player chooses the size (720p or 480p); the bitrate follows it.
+      const job = transcoder.start({ input: upstream, signal: controller.signal, profile: profileForHeight(profile, body?.height) });
       let sent = 0;
       job.output.once("data", () => {
         if (!res.headersSent) res.writeHead(200, { "content-type": "video/mp2t", "cache-control": "no-store" });
@@ -120,7 +121,7 @@ async function main() {
   }
   for (const [name, reason] of Object.entries(detected.failures)) console.warn(`Encoder ${name} unavailable: ${reason}`);
   const transcoder = createTranscoder({ ffmpeg: config.ffmpeg, limit: config.limit, encoder: detected.encoder, device: config.device, profile: config.profile });
-  const server = http.createServer(createTranscoderHandler({ token: config.token, transcoder, allowedPrivateHosts: config.allowedPrivateHosts }));
+  const server = http.createServer(createTranscoderHandler({ token: config.token, transcoder, profile: config.profile, allowedPrivateHosts: config.allowedPrivateHosts }));
   server.listen(config.port, "0.0.0.0", () =>
     console.log(`TesPlay car-mode transcoder on port ${config.port}: ${detected.encoder} encoder, ${config.profile.height}p${config.profile.fps}, up to ${config.limit} channels`));
   const stop = () => { server.close(); server.closeAllConnections(); };

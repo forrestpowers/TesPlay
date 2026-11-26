@@ -558,7 +558,7 @@ export function createMediaService(ctx) {
         const converted = await requestRemote(transcoder.endpoint, {
           method: "POST",
           headers: { Authorization: `Bearer ${transcoder.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ url: item.url }),
+          body: JSON.stringify({ url: item.url, ...(item.transcodeHeight ? { height: item.transcodeHeight } : {}) }),
           allowedPrivateHosts: transcoder.allowedPrivateHosts,
           timeout: 60000, signal: controller.signal, onSocket: retainSocket,
         });

@@ -1082,6 +1082,10 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       if (requested === "audio" && kind !== "live") throw providerError("Audio conversion is available for live channels only.");
       let compatibility = requested === "video" && (kind !== "live" || !media.carModeAvailable) ? null : requested;
       const carMode = kind === "live" && media.carModeAvailable ? { carMode: true } : {};
+      // Car mode sizes the player offers; 720p unless 480p is asked for.
+      const carHeight = req.query.carHeight === "480" ? 480 : 720;
+      const conversion = () => compatibility === "video" ? { remux: "video", transcodeHeight: carHeight } : compatibility ? { remux: compatibility } : {};
+      const converted = () => compatibility ? { compatibility, isLive: true, ...(compatibility === "video" ? { carModeHeight: carHeight } : {}) } : {};
       if (c.type === "xtream") {
         if (!IPTV_KINDS.includes(kind === "episode" ? "series" : kind)) throw iptvOnDemandOff();
         let category, extension, streamId;
@@ -1125,11 +1129,11 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
             url: u.toString(),
             allowedPrivateHosts: privateHosts(c.config.url),
             kind: type,
-            ...(compatibility ? { remux: compatibility } : {}),
+            ...conversion(),
           }),
           type,
           streamKind: extension === "ts" ? "continuous-ts" : "direct-file",
-          ...(compatibility ? { compatibility, isLive: true } : {}),
+          ...converted(),
           ...carMode,
         });
       }
@@ -1147,11 +1151,11 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           url: media.register(req, c, {
             url: entry.url,
             allowedPrivateHosts: c.config.url ? privateHosts(c.config.url) : [],
-            ...(compatibility ? { remux: compatibility } : {}),
+            ...conversion(),
           }),
           type,
           streamKind: compatibility || /\.ts(?:\?|$)/i.test(entry.url) ? "continuous-ts" : "direct-file",
-          ...(compatibility ? { compatibility, isLive: true } : {}),
+          ...converted(),
           ...(playlistEntry ? {} : carMode),
         });
       }

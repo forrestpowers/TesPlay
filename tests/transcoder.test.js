@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import express from "express";
-import { createTranscoder, detectEncoder, probeArguments, transcodeArguments } from "../server/transcoder.js";
+import { createTranscoder, DEFAULT_PROFILE, detectEncoder, probeArguments, profileForHeight, transcodeArguments } from "../server/transcoder.js";
 import { createTranscoderHandler, transcoderConfig } from "../server/transcoder-service.js";
 import { carModeTranscoder, createMediaService } from "../server/media.js";
 
@@ -50,6 +50,35 @@ test("the transcoder picks the first encoder that works and reports why others f
   assert.equal((await detectEncoder({ run: fakeRun("software") })).encoder, "software");
   assert.equal((await detectEncoder({ run: fakeRun("none") })).encoder, null);
   assert.equal((await detectEncoder({ run: fakeRun("vaapi"), preference: "software" })).encoder, null, "a forced encoder is not substituted");
+});
+
+test("car mode sizes scale the bitrate with the picture and ignore unknown heights", () => {
+  assert.equal(profileForHeight(DEFAULT_PROFILE, undefined), DEFAULT_PROFILE);
+  assert.equal(profileForHeight(DEFAULT_PROFILE, 720), DEFAULT_PROFILE);
+  assert.equal(profileForHeight(DEFAULT_PROFILE, 999), DEFAULT_PROFILE);
+  assert.equal(profileForHeight(DEFAULT_PROFILE, "../etc"), DEFAULT_PROFILE);
+  const small = profileForHeight(DEFAULT_PROFILE, 480);
+  assert.deepEqual({ height: small.height, fps: small.fps, videoKbps: small.videoKbps }, { height: 480, fps: 30, videoKbps: 1333 });
+  const args = transcodeArguments({ profile: small });
+  assert.match(args[args.indexOf("-vf") + 1], /h=min\(ih\\,480\)/);
+  assert.equal(args[args.indexOf("-b:v") + 1], "1333k");
+});
+
+test("the transcoder service converts at the size each request asks for", async (t) => {
+  const started = [];
+  const transcoder = { encoder: "software", active: 0, limit: 3, start({ profile }) {
+    started.push(profile.height);
+    const output = Readable.from([Buffer.alloc(188, 0x47)]);
+    return { output, stop() {}, exit: new Promise((resolve) => output.once("end", () => setTimeout(() => resolve({ code: 0 }), 5))) };
+  } };
+  const base = await serve(t, createTranscoderHandler({ token: TOKEN, transcoder,
+    request: async () => Object.assign(Readable.from([Buffer.alloc(188, 0x47)]), { statusCode: 200, headers: { "content-type": "video/mp2t" } }) }));
+  for (const height of [480, undefined, 9999]) {
+    const response = await fetch(`${base}/transcode`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ url: "http://203.0.113.5/live/u/p/1.ts", height }) });
+    assert.equal(response.status, 200);
+    await response.arrayBuffer();
+  }
+  assert.deepEqual(started, [480, 720, 720]);
 });
 
 test("transcoder settings are bounded and private provider addresses stay refused by default", () => {
@@ -141,7 +170,7 @@ async function proxyFor(t, transcoderHandler, configured = true) {
     fake.closeAllConnections(); viewer.closeAllConnections();
     await Promise.all([new Promise((resolve) => fake.close(resolve)), new Promise((resolve) => viewer.close(resolve))]);
   });
-  const path = service.register({ user: { id: "viewer" } }, null, { url: "http://203.0.113.21/live/user/secret/7.ts", kind: "video", remux: "video" });
+  const path = service.register({ user: { id: "viewer" } }, null, { url: "http://203.0.113.21/live/user/secret/7.ts", kind: "video", remux: "video", transcodeHeight: 480 });
   return { base: `http://127.0.0.1:${viewer.address().port}`, path, service, received };
 }
 
@@ -159,6 +188,7 @@ test("the media proxy relays car mode through the transcoder with its token", as
   assert.equal(received[0].path, "/transcode");
   assert.equal(received[0].authorization, `Bearer ${TOKEN}`);
   assert.equal(received[0].body.url, "http://203.0.113.21/live/user/secret/7.ts");
+  assert.equal(received[0].body.height, 480);
 });
 
 test("car mode failures name the cause without exposing the provider address", async (t) => {
