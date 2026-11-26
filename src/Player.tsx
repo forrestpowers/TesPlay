@@ -10,6 +10,7 @@ import { errorMessage } from "./api";
 import type { MediaItem, Playback, PlaybackSettings } from "./types";
 import EpisodeSelector from "./EpisodeSelector";
 import {resolvePlayback} from "./playback-selection";
+import { CAR_MODE_KEY, readDevicePreference } from "./device-preferences";
 import TesPlayer from "./TesPlayer";
 import { idleRemotePlayback, type RemotePlayback } from "./remote-state";
 export default function Player({
@@ -110,7 +111,9 @@ export default function Player({
 
     (async () => {
       try {
-        const p = await resolvePlayback(item,{...settings,compatibility:compatible},controller.signal);
+        // Car mode is a per-device choice for live IPTV; the server ignores it without a transcoder.
+        const carMode = item.type === 'live' && ['xtream','m3u'].includes(item.providerType || '') && readDevicePreference(CAR_MODE_KEY);
+        const p = await resolvePlayback(item,{...settings,compatibility:compatible,...(carMode?{carMode:true}:{})},controller.signal);
         if (!dead&&!resumeLoaded.current) {
           if (settings.startOver) resumeRef.current=0;
           else if (p.resumeSeconds!==undefined) resumeRef.current=p.resumeSeconds;

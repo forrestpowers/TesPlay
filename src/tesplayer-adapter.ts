@@ -40,7 +40,8 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
   const selectedQuality = playback.settings?.qualityId || 'auto';
   let fileTracks: MediaTrack[] | undefined;
   let representationId:string|undefined;
-  let audioRemuxed = playback.compatibility === 'audio';
+  // Car mode already delivers AAC, so it never needs audio conversion as well.
+  let audioRemuxed = playback.compatibility === 'audio' || playback.compatibility === 'video';
   let compatibilityFailure: string | undefined;
   async function prepare(p: Playback, qualityId = 'auto', operationSignal = signal, audioId = selectedAudio, useDefaults = false): Promise<PlaybackSession> {
     for (const raw of [p.url, p.audioUrl, ...(p.subtitles || []).map(track => track.url)]) {

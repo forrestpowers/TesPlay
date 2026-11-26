@@ -404,7 +404,14 @@ test(
     assert.equal(converted.compatibility, "audio");
     assert.equal(converted.isLive, true);
     assert.ok(!JSON.stringify(converted).includes("provider-secret"));
-    assert.equal((await f.request(`/api/playback?connectionId=${id}&itemId=7&kind=live&compatibility=video`)).status, 400);
+    // Car mode without a configured transcoder plays the channel normally.
+    const unconverted = await (
+      await f.request(`/api/playback?connectionId=${id}&itemId=7&kind=live&compatibility=video`)
+    ).json();
+    assert.equal(unconverted.type, "hls");
+    assert.equal(unconverted.compatibility, undefined);
+    assert.equal(unconverted.carMode, undefined);
+    assert.equal((await f.request(`/api/playback?connectionId=${id}&itemId=7&kind=live&compatibility=other`)).status, 400);
     assert.equal((await f.request(`/api/playback?connectionId=${id}&itemId=41&kind=movie&compatibility=audio`)).status, 400);
     const master = await (await f.request(playback.url)).text();
     assert.equal(await (await f.request(playback.url)).text(), master);

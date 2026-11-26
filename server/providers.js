@@ -1073,12 +1073,15 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       const c = connection(req, req.query.connectionId);
       const id = String(req.query.itemId || "");
       const kind = String(req.query.kind || "movie");
-      // Server audio conversion (AC-3 to AAC) needs a continuous MPEG-TS
-      // source and is offered for live channels only.
-      const compatibility = req.query.compatibility === undefined ? null : String(req.query.compatibility);
-      if (compatibility !== null && compatibility !== "audio") throw providerError("Choose a valid compatibility option.");
-      if (compatibility === "audio" && kind !== "live") throw providerError("Audio conversion is available for live channels only.");
-      const remux = compatibility === "audio" ? { remux: "audio" } : {};
+      // Server audio conversion (AC-3 to AAC) and car mode (a 720p30 stream
+      // from the transcoder) need a continuous MPEG-TS source and are offered
+      // for live channels only. Car mode without a configured transcoder plays
+      // the channel normally, so a device setting can never break playback.
+      const requested = req.query.compatibility === undefined ? null : String(req.query.compatibility);
+      if (requested !== null && !["audio", "video"].includes(requested)) throw providerError("Choose a valid compatibility option.");
+      if (requested === "audio" && kind !== "live") throw providerError("Audio conversion is available for live channels only.");
+      let compatibility = requested === "video" && (kind !== "live" || !media.carModeAvailable) ? null : requested;
+      const carMode = kind === "live" && media.carModeAvailable ? { carMode: true } : {};
       if (c.type === "xtream") {
         if (!IPTV_KINDS.includes(kind === "episode" ? "series" : kind)) throw iptvOnDemandOff();
         let category, extension, streamId;
@@ -1086,7 +1089,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           await ensureXtream(req,c,"live",id);
           category = "live";
           streamId = numeric(id);
-          extension = c.config.output === "ts" || compatibility === "audio" ? "ts" : "m3u8";
+          extension = c.config.output === "ts" || compatibility ? "ts" : "m3u8";
         } else if (kind === "episode") {
           const match = /^(\d+):(\d+):([a-zA-Z0-9]{1,8})$/.exec(id);
           if (!match) throw providerError("Invalid episode.");
@@ -1122,29 +1125,34 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
             url: u.toString(),
             allowedPrivateHosts: privateHosts(c.config.url),
             kind: type,
-            ...remux,
+            ...(compatibility ? { remux: compatibility } : {}),
           }),
           type,
           streamKind: extension === "ts" ? "continuous-ts" : "direct-file",
-          ...(compatibility === "audio" ? { compatibility, isLive: true } : {}),
+          ...(compatibility ? { compatibility, isLive: true } : {}),
+          ...carMode,
         });
       }
       if (c.type === "m3u") {
         const entry = (await playlist(c)).find((x) => x.id === id);
         if (!entry) throw providerError("Channel not found.", 404);
         ensure(req,c,{type:"live",category:entry.category || '__ungrouped__'});
-        const type = /\.m3u8(?:\?|$)/i.test(entry.url) ? "hls" : "video";
-        if (compatibility === "audio" && type === "hls")
+        const playlistEntry = /\.m3u8(?:\?|$)/i.test(entry.url);
+        if (compatibility === "audio" && playlistEntry)
           throw providerError("Audio conversion needs a continuous stream; this channel is an HLS playlist.");
+        // The transcoder reads continuous MPEG-TS, so HLS entries play normally.
+        if (compatibility === "video" && playlistEntry) compatibility = null;
+        const type = playlistEntry && !compatibility ? "hls" : "video";
         return res.json({
           url: media.register(req, c, {
             url: entry.url,
             allowedPrivateHosts: c.config.url ? privateHosts(c.config.url) : [],
-            ...remux,
+            ...(compatibility ? { remux: compatibility } : {}),
           }),
           type,
-          streamKind: compatibility === "audio" || /\.ts(?:\?|$)/i.test(entry.url) ? "continuous-ts" : "direct-file",
-          ...(compatibility === "audio" ? { compatibility, isLive: true } : {}),
+          streamKind: compatibility || /\.ts(?:\?|$)/i.test(entry.url) ? "continuous-ts" : "direct-file",
+          ...(compatibility ? { compatibility, isLive: true } : {}),
+          ...(playlistEntry ? {} : carMode),
         });
       }
       if (c.type === "local") {

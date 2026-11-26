@@ -1,16 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PlayerSnapshot } from '@canvas-stream-player/contracts';
 
-/** Per-device player preferences that only change this browser's behaviour. */
-export const PLAYBACK_STATS_KEY = 'tesplay.playbackStats';
-export const HALF_FRAME_RATE_KEY = 'tesplay.halfFrameRate';
-export function readDevicePreference(key: string): boolean {
-  try { return localStorage.getItem(key) === '1'; } catch { return false; }
-}
-export function writeDevicePreference(key: string, value: boolean): void {
-  try { if (value) localStorage.setItem(key, '1'); else localStorage.removeItem(key); } catch { /* Private browsing: keep the in-memory value. */ }
-}
-
 export type FrameRates = { source: number | null; shown: number; dropped: number; skipped: number };
 type Counters = { at: number; rendered: number; dropped: number; skipped: number };
 

@@ -5,7 +5,8 @@ import SutroIcon from "./SutroIcon";
 import LiveIndicator from "./LiveIndicator";
 import { Modal } from "./components";
 import { useCallback, useEffect, useRef, useState } from 'react';
-import PlaybackStats, { HALF_FRAME_RATE_KEY, PLAYBACK_STATS_KEY, readDevicePreference, writeDevicePreference } from './PlaybackStats';
+import PlaybackStats from './PlaybackStats';
+import { CAR_MODE_KEY, HALF_FRAME_RATE_KEY, PLAYBACK_STATS_KEY, readDevicePreference, writeDevicePreference } from './device-preferences';
 import { LoaderCircle, Radio, ChevronRight, ChevronLeft, Captions, Minus, Plus, Gauge, Languages, SkipBack, SkipForward } from 'lucide-react';
 import { createTesPlayerEngine, probeMediaCapabilities, parseSubtitles, activeCuesAt } from '@canvas-stream-player/player';
 import { DEFAULT_PLAYER_POLICY } from '@canvas-stream-player/contracts';
@@ -35,6 +36,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   // Per-device settings: a car screen and a phone can differ.
   const [showStats, setShowStats] = useState(() => readDevicePreference(PLAYBACK_STATS_KEY));
   const [halfFrameRate, setHalfFrameRate] = useState(() => readDevicePreference(HALF_FRAME_RATE_KEY));
+  const carModeOn = playback.compatibility === 'video';
   const restartAt = useRef<number | null>(null);
   const getEngineSnapshot = useCallback(() => engine.current?.getSnapshot() ?? null, []);
   const [message, setMessage] = useState(INITIAL_MESSAGE);
@@ -167,7 +169,8 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
           if (event.type === 'ended') { save(true); ended.current(); }
           if (event.type === 'audio-unlock-required') { setMessage('Press play to enable sound'); setBusy(false); }
         });
-        await active.load({ session: adapter.session, resumePositionSeconds: resumeAt || null, autoplay: autoStart, startAtLiveEdge: adapter.session.isLive, preferredQualityId: adapter.session.selectedQualityId ?? null, preferredAudioTrackId: adapter.session.selectedAudioTrackId ?? null, preferredSubtitleTrackId: playback.settings?.subtitleTrackId && playback.settings.subtitleTrackId !== 'default' ? playback.settings.subtitleTrackId==='off'?null:adapter.session.subtitles.find(t=>t.id===playback.settings?.subtitleTrackId)?.id||null : preferredSubtitleTrack(adapter.session.subtitles,preferences)?.id || null, signedAvOffsetMs: 0 }, controller.signal);
+        // A live channel always joins at its live edge: a position saved earlier means nothing in a new live stream.
+        await active.load({ session: adapter.session, resumePositionSeconds: adapter.session.isLive ? null : resumeAt || null, autoplay: autoStart, startAtLiveEdge: adapter.session.isLive, preferredQualityId: adapter.session.selectedQualityId ?? null, preferredAudioTrackId: adapter.session.selectedAudioTrackId ?? null, preferredSubtitleTrackId: playback.settings?.subtitleTrackId && playback.settings.subtitleTrackId !== 'default' ? playback.settings.subtitleTrackId==='off'?null:adapter.session.subtitles.find(t=>t.id===playback.settings?.subtitleTrackId)?.id||null : preferredSubtitleTrack(adapter.session.subtitles,preferences)?.id || null, signedAvOffsetMs: 0 }, controller.signal);
         startPlexPlaybackHeartbeat(playback, controller.signal, () => !!active && ['ready','playing','paused','seeking','stalled'].includes(active.getSnapshot().phase));
         if (!controller.signal.aborted) { setBusy(false); if(active.getSnapshot().phase!=='playing')setMessage(INITIAL_MESSAGE); }
       } catch (reason) { if (!controller.signal.aborted) error(reason); }
@@ -299,6 +302,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
           <div className="player-setting-row"><span>Quality</span><button className="player-choice" aria-label="Cycle video quality" disabled={!qualities.length||busy} onClick={cycleQuality}><Gauge size={18}/>{snapshot?.qualities.find(q=>q.id===snapshot.selectedQualityId)?.label||'Auto'}</button></div>
           <div className="player-setting-row"><span>Speed</span><div className="player-stepper"><button aria-label="Decrease playback speed" disabled={!snapshot||snapshot.isLive||busy||(snapshot.playbackRate||1)<=.25} onClick={()=>void dispatch({type:'set-rate',rate:Math.max(.25,(snapshot?.playbackRate||1)-.25)})}><Minus size={18}/></button><output>{snapshot?.playbackRate||1}×</output><button aria-label="Increase playback speed" disabled={!snapshot||snapshot.isLive||busy||(snapshot.playbackRate||1)>=2} onClick={()=>void dispatch({type:'set-rate',rate:Math.min(2,(snapshot?.playbackRate||1)+.25)})}><Plus size={18}/></button></div></div>
           {(snapshot?.audioTracks.length||0)>1&&<div className="player-setting-row"><span>Audio</span><div className="player-track-choices">{snapshot?.audioTracks.map(track=><button className="player-choice" aria-pressed={snapshot.selectedAudioTrackId===track.id} key={track.id} disabled={busy} onClick={()=>void dispatch({type:'select-audio-track',trackId:track.id})}><Languages size={16}/>{track.label}</button>)}</div></div>}
+          {(playback.carMode || carModeOn)&&<div className="player-setting-row"><span>Car mode (720p)</span><button className={`player-mode-toggle ${carModeOn?'enabled':''}`} role="switch" aria-checked={carModeOn} aria-label="Car mode: convert this channel to 720p at 30 fps" title="The server converts live channels to 720p at 30 fps (about 3 Mbps): smoother on a car screen and lighter on mobile data." disabled={busy} onClick={()=>{writeDevicePreference(CAR_MODE_KEY,!carModeOn);setSettings(false);freshRetry.current();}}><span className="toggle-track"><i/></span><span>{carModeOn?'On':'Off'}</span></button></div>}
           <div className="player-setting-row"><span>Limit to 30 fps</span><button className={`player-mode-toggle ${halfFrameRate?'enabled':''}`} role="switch" aria-checked={halfFrameRate} aria-label="Limit 60 fps video to 30 fps" title="Shows every other frame of 50/60 fps video. Can look smoother on slower screens." disabled={busy} onClick={()=>{const value=!halfFrameRate;writeDevicePreference(HALF_FRAME_RATE_KEY,value);if(!isLive&&snapshot)restartAt.current=snapshot.positionSeconds;setHalfFrameRate(value);}}><span className="toggle-track"><i/></span><span>{halfFrameRate?'On':'Off'}</span></button></div>
           <div className="player-setting-row"><span>Playback stats</span><button className={`player-mode-toggle ${showStats?'enabled':''}`} role="switch" aria-checked={showStats} aria-label="Show playback stats" onClick={()=>{const value=!showStats;writeDevicePreference(PLAYBACK_STATS_KEY,value);setShowStats(value);}}><span className="toggle-track"><i/></span><span>{showStats?'On':'Off'}</span></button></div>
           <button className="text-button" onClick={()=>{setPasteCaptions(true);setSettings(false);}}>Paste subtitles</button>

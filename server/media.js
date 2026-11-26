@@ -320,8 +320,24 @@ export const mediaTypes = {
   ".srt": "application/x-subrip",
 };
 
+/** The car-mode transcoder, when both its address and a token of at least 24 characters are set. */
+export function carModeTranscoder(url, token) {
+  if (!url || typeof token !== "string" || token.length < 24) return null;
+  const base = validateRemoteUrl(url);
+  if (!base.pathname.endsWith("/")) base.pathname += "/";
+  return {
+    endpoint: new URL("transcode", base).toString(),
+    token,
+    // The operator configured this address, so a LAN transcoder is allowed.
+    allowedPrivateHosts: [base.hostname.replace(/^\[|\]$/g, "")],
+  };
+}
+
 export function createMediaService(ctx) {
   const remuxer = ctx.audioRemuxer || createAudioRemuxer();
+  // Car mode: an optional transcoder service (server/transcoder-service.js),
+  // usually on a machine with a GPU, converts live channels to 720p30.
+  const transcoder = carModeTranscoder(ctx.transcoderUrl ?? process.env.TRANSCODER_URL, ctx.transcoderToken ?? process.env.TRANSCODER_TOKEN);
   const resources = new Map();
   const socketOwners = new WeakMap();
   const watchedSockets = new WeakSet();
@@ -533,6 +549,31 @@ export function createMediaService(ctx) {
           socket.once("close", () => socketOwners.get(socket)?.sockets?.delete(socket));
         }
       };
+      // Car mode: the transcoder opens the provider stream itself and returns a
+      // lighter MPEG-TS stream (720p30 H.264, stereo AAC) that is relayed here.
+      if (item.remux === "video") {
+        if (!transcoder) throw providerError("Car mode needs a transcoder configured on the server.", 503);
+        res.status(200).setHeader("Content-Type", "video/mp2t");
+        if (req.method === "HEAD") return res.end();
+        const converted = await requestRemote(transcoder.endpoint, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${transcoder.token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ url: item.url }),
+          allowedPrivateHosts: transcoder.allowedPrivateHosts,
+          timeout: 60000, signal: controller.signal, onSocket: retainSocket,
+        });
+        if (converted.statusCode >= 400) {
+          let reason = "";
+          try { reason = String(JSON.parse(await readBody(converted, 4096)).error || ""); } catch { converted.destroy(); }
+          return res.status(converted.statusCode === 503 ? 503 : 502).json({
+            error: `Car mode is unavailable: ${reason || `the transcoder returned HTTP ${converted.statusCode}`}`,
+          });
+        }
+        res.once("close", () => converted.destroy());
+        converted.once("error", () => res.destroy());
+        converted.pipe(res);
+        return;
+      }
       // Live channels whose only audio track the browser cannot decode: the
       // provider's continuous stream is opened here with the usual validation,
       // then piped through FFmpeg, which copies the video and re-encodes only
@@ -933,5 +974,5 @@ export function createMediaService(ctx) {
       res.json({ released: true });
     } catch (error) { next(error); }
   }
-  return { register, handler, heartbeatHandler, releaseHandler };
+  return { register, handler, heartbeatHandler, releaseHandler, carModeAvailable: !!transcoder };
 }

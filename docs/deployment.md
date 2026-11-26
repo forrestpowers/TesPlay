@@ -170,6 +170,45 @@ What it gives: a **Home** tab with the account's recommendations, **Latest** (ne
 
 Playback resolves streams through InnerTube first: the signed-in TV client when the connection is signed in, declaring an older TV app version (5.x, the one yt-dlp calls `tv_downgraded`) for the player request, because the current TV versions (7.x) are answered with server-ABR-only streaming data and no plain URLs (as of November 2026); then an anonymous visionOS client (the client yt-dlp uses) carrying visitor data minted by a plain page view of youtube.com; without that visitor data every anonymous InnerTube client answers “Sign in to confirm you’re not a bot”. It picks the best H.264 (`avc1`) video track at or below 1080p plus AAC audio (itag 140), for the anonymous client reads a slice from the middle of each file to confirm the host serves more than the first megabyte (clients that need a proof-of-origin token stop there; the signed-in TV client's URLs serve any range and skip the check), and registers both through the media proxy as a dual-input source. googlevideo refuses open-ended and multi-megabyte range requests, while TesPlayer asks for `bytes=N-`, so the proxy re-chunks each client range into 4 MiB upstream requests. To shorten the start, the proxy fetches the first 2 MiB of video and 512 KiB of audio as soon as it hands out the links, so the player's opening reads come from memory over an already open connection; resolved links are remembered for up to 30 minutes (well inside their expiry) so reopening or resuming a video skips the player request, and are dropped when googlevideo refuses them; and the signed-in player client is prepared when the YouTube Home tab loads. A live broadcast on a signed-in connection comes back from the same older TV client as one plain URL per track that serves a numbered 5-second segment (`&sq=N`), each a complete fragmented MP4; the newest segment and the head sequence number (`X-Head-Seqnum`) come back without `sq`. The server relays the H.264 and AAC tracks as two growing fragmented-MP4 streams, starting both at the same segment two behind the live edge, keeping the first segment's header and appending only the fragments of the following ones, and renewing the URLs through the player request when they expire; TesPlayer reads the pair as a live dual input. The relay holds nothing on disk. Live broadcasts without sign-in, upcoming streams, SABR-only responses and anything InnerTube refuses fall back to the yt-dlp resolver when it is enabled. YouTube changes these rules often, so keep the yt-dlp profile available as the fallback.
 
+## Car mode: a GPU transcoder for live channels
+
+Live IPTV in 1080p or at 60 fps can be too much for a car browser to decode smoothly, and too heavy for mobile data. Car mode converts a live channel to H.264 at up to 720p and 30 fps with stereo AAC, about 3 Mbps. The conversion runs in a separate transcoder service (`Dockerfile.transcoder`, `server/transcoder-service.js`), ideally on a machine with an Intel GPU such as a mini PC. TesPlay posts the channel's address to it; the transcoder opens the provider stream itself and streams the result back, so the provider sees the transcoder's internet connection.
+
+On the transcoder machine, pass the GPU's render device into the container and give the container that device's group (`stat -c %g /dev/dri/renderD128` prints it):
+
+```yaml
+services:
+  transcoder:
+    build:
+      context: https://github.com/forrestpowers/TesPlay.git
+      dockerfile: Dockerfile.transcoder
+    image: tesplay-transcoder:local
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    group_add:
+      - "${RENDER_GID}"
+    environment:
+      TRANSCODER_TOKEN: ${TRANSCODER_TOKEN}
+    ports:
+      - "4190:4190"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+```
+
+At startup the transcoder tries the GPU encoder, then the GPU's low-power encoder (the only one on some Intel chips, such as the N97), then software encoding, and logs which one it uses. `GET /health` reports it. Optional settings: `TRANSCODE_LIMIT` (simultaneous channels, default 3), `TRANSCODE_HEIGHT` (default 720), `TRANSCODE_FPS` (default 30), `TRANSCODE_VIDEO_KBPS` (default 3000), `TRANSCODER_ENCODER` (`auto`, `vaapi`, `vaapi-lp` or `software`) and `TRANSCODER_ALLOWED_PRIVATE_HOSTS` (provider hosts on a private network; refused by default).
+
+Make the transcoder reachable from TesPlay, for example as a Pangolin resource on an existing Newt site that points at the machine's LAN address and port 4190. TesPlay calls it server to server, so that resource cannot require the Pangolin login; the token protects it instead, and a rule that allows only the TesPlay server's address adds a second check. Then set `TRANSCODER_URL` (for example `https://transcode.example.com`) and the same `TRANSCODER_TOKEN` on TesPlay and rebuild it.
+
+With both set, live Xtream channels and M3U channels with continuous `.ts` addresses show **Car mode (720p)** in the player settings. The choice is remembered per browser, so it can stay on in the car and off elsewhere. Without a transcoder configured, a car-mode request plays the channel normally.
+
 ## IPTV movies and series
 
 Most IPTV providers deliver their movies and series as H.265 (HEVC), which the Tesla browser cannot decode without transcoding, so TesPlay offers IPTV live channels only. Movies and series are left out of category setup, Home, the IPTV library and household sharing, and the Series and Movies tabs appear only when another connected library (Google Drive, or an existing Plex or Stremio connection) can fill them. Set `IPTV_ON_DEMAND=1` to offer IPTV movies and series again.

@@ -1,0 +1,20 @@
+# Car-mode transcoder for a machine with an Intel GPU (Quick Sync / VAAPI), such as a mini PC.
+# Run it with the GPU device: devices: ["/dev/dri/renderD128:/dev/dri/renderD128"].
+# Without a usable GPU it falls back to software encoding (about one channel per few CPU cores).
+ARG NODE_IMAGE=node:22-bookworm-slim
+FROM ${NODE_IMAGE}
+# The non-free Intel media driver adds the hardware encoders recent Intel GPUs need.
+RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg intel-media-va-driver-non-free ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY vendor ./vendor
+RUN npm ci --omit=dev && npm cache clean --force
+COPY server ./server
+COPY shared ./shared
+ENV NODE_ENV=production LIBVA_DRIVER_NAME=iHD
+USER node
+EXPOSE 4190
+CMD ["node", "server/transcoder-service.js"]
