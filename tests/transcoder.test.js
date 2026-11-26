@@ -10,7 +10,7 @@ import { Readable } from "node:stream";
 import express from "express";
 import { createTranscoder, DEFAULT_PROFILE, detectEncoder, probeArguments, profileForHeight, transcodeArguments } from "../server/transcoder.js";
 import { createTranscoderHandler, transcoderConfig } from "../server/transcoder-service.js";
-import { carModeTranscoder, createMediaService } from "../server/media.js";
+import { carModeTranscoder, createMediaService, requestRemote } from "../server/media.js";
 
 const run = promisify(execFile);
 const hasFfmpeg = await run("ffmpeg", ["-version"]).then(() => true, () => false);
@@ -142,6 +142,8 @@ test("car mode needs both a transcoder address and a long token", () => {
   assert.equal(configured.endpoint, "https://transcode.example.com/base/transcode");
   assert.deepEqual(configured.allowedPrivateHosts, ["transcode.example.com"]);
   assert.throws(() => carModeTranscoder("ftp://transcode.example.com", TOKEN));
+  assert.equal(carModeTranscoder("https://transcode.example.com", TOKEN).connectHost, undefined);
+  assert.equal(carModeTranscoder("https://transcode.example.com", TOKEN, " gerbil ").connectHost, "gerbil");
 });
 
 // The media proxy relays the transcoder: route its outbound request to a local
@@ -239,5 +241,10 @@ test("car mode explains a login page in place of the transcoder", async (t) => {
 test("car mode explains an unreachable transcoder", async (t) => {
   const { base, path } = await proxyFor(t, (req) => req.socket.destroy());
   const body = await (await fetch(base + path)).json();
-  assert.match(body.error, /cannot reach the transcoder at 203\.0\.113\.40:4190/);
+  assert.match(body.error, /cannot reach the transcoder at 203\.0\.113\.40:4190 \(ECONNRESET\)\..*TRANSCODER_CONNECT_HOST/);
+});
+
+test("a connection address replaces DNS for the configured host only", async () => {
+  // The URL names a public address, but the connection goes to the configured host.
+  await assert.rejects(requestRemote("http://203.0.113.40:4190/health", { connectHost: "transcoder.invalid", timeout: 2000 }), /could not be resolved/);
 });

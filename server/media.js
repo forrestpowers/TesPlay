@@ -105,18 +105,21 @@ export async function requestRemote(input, options = {}, depth = 0) {
   options.signal?.throwIfAborted();
   const u = validateRemoteUrl(input);
   const host = hostnameOf(u);
+  // An operator-configured connection address (for a service behind a proxy on
+  // this same server) replaces DNS; TLS and the Host header keep the URL's name.
+  const target = options.connectHost || host;
   let addresses;
   try {
-    addresses = isIP(host)
-      ? [{ address: host, family: isIP(host) }]
-      : await lookup(host, { all: true });
+    addresses = isIP(target)
+      ? [{ address: target, family: isIP(target) }]
+      : await lookup(target, { all: true });
   } catch {
     options.signal?.throwIfAborted();
     throw providerError("The provider address could not be resolved. Check its current address with the provider.", 502);
   }
   if (!addresses.length)
     throw providerError("The provider address could not be resolved.", 502);
-  const privateAllowed = (options.allowedPrivateHosts || []).includes(host);
+  const privateAllowed = !!options.connectHost || (options.allowedPrivateHosts || []).includes(host);
   if (
     addresses.some(
       (a) =>
@@ -151,12 +154,12 @@ export async function requestRemote(input, options = {}, depth = 0) {
       },
       resolve,
     );
-    request.once("error", () =>
+    request.once("error", (error) =>
       reject(
-        providerError(
+        Object.assign(providerError(
           "Cannot reach the provider. Check its address and network access.",
           502,
-        ),
+        ), { networkCode: typeof error?.code === "string" ? error.code : undefined }),
       ),
     );
     request.once("timeout", () => request.destroy());
@@ -181,6 +184,8 @@ export async function requestRemote(input, options = {}, depth = 0) {
       {
         ...options,
         headers: forwardedHeaders,
+        // A connection address belongs to the configured host only.
+        connectHost: next.host === u.host ? options.connectHost : undefined,
         ...(response.statusCode === 303
           ? { method: "GET", body: undefined }
           : {}),
@@ -321,7 +326,7 @@ export const mediaTypes = {
 };
 
 /** The car-mode transcoder, when both its address and a token of at least 24 characters are set. */
-export function carModeTranscoder(url, token) {
+export function carModeTranscoder(url, token, connectHost = "") {
   if (!url || typeof token !== "string" || token.length < 24) return null;
   const base = validateRemoteUrl(url);
   if (!base.pathname.endsWith("/")) base.pathname += "/";
@@ -329,6 +334,9 @@ export function carModeTranscoder(url, token) {
     endpoint: new URL("transcode", base).toString(),
     host: base.host,
     token,
+    // TesPlay and Pangolin on one server: reach Pangolin over the shared Docker
+    // network (for example `gerbil`) instead of the server's own public address.
+    connectHost: String(connectHost || "").trim() || undefined,
     // The operator configured this address, so a LAN transcoder is allowed.
     allowedPrivateHosts: [base.hostname.replace(/^\[|\]$/g, "")],
   };
@@ -338,7 +346,7 @@ export function createMediaService(ctx) {
   const remuxer = ctx.audioRemuxer || createAudioRemuxer();
   // Car mode: an optional transcoder service (server/transcoder-service.js),
   // usually on a machine with a GPU, converts live channels to 720p30.
-  const transcoder = carModeTranscoder(ctx.transcoderUrl ?? process.env.TRANSCODER_URL, ctx.transcoderToken ?? process.env.TRANSCODER_TOKEN);
+  const transcoder = carModeTranscoder(ctx.transcoderUrl ?? process.env.TRANSCODER_URL, ctx.transcoderToken ?? process.env.TRANSCODER_TOKEN, ctx.transcoderConnectHost ?? process.env.TRANSCODER_CONNECT_HOST);
   const resources = new Map();
   const socketOwners = new WeakMap();
   const watchedSockets = new WeakSet();
@@ -568,12 +576,13 @@ export function createMediaService(ctx) {
             method: "POST",
             headers: { Authorization: `Bearer ${transcoder.token}`, "Content-Type": "application/json" },
             body: JSON.stringify({ url: item.url, ...(item.transcodeHeight ? { height: item.transcodeHeight } : {}) }),
-            allowedPrivateHosts: transcoder.allowedPrivateHosts,
+            allowedPrivateHosts: transcoder.allowedPrivateHosts, connectHost: transcoder.connectHost,
             timeout: 60000, signal: controller.signal, onSocket: retainSocket,
           });
         } catch (error) {
           if (controller.signal.aborted) throw error;
-          return unavailable(502, `TesPlay cannot reach the transcoder at ${transcoder.host}. Check TRANSCODER_URL, the Pangolin resource and that the transcoder is running.`);
+          const detail = error?.networkCode || (error?.status === 400 || /resolve/.test(error?.message || "") ? error.message.replace(/\.$/, "") : "");
+          return unavailable(502, `TesPlay cannot reach the transcoder at ${transcoder.host}${transcoder.connectHost ? ` through ${transcoder.connectHost}` : ""}${detail ? ` (${detail})` : ""}. Check TRANSCODER_URL, the Pangolin resource and that the transcoder is running. If Pangolin runs on this same server, set TRANSCODER_CONNECT_HOST.`);
         }
         if (converted.statusCode >= 400) {
           let reason = "";
