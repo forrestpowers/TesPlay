@@ -41,10 +41,10 @@
 .remote-paired .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: 18px 14px; }
 .remote-paired .page-section { padding: 12px 0; }
 .remote-paired .library-layout { display: block; }
-.remote-paired .library-sidebar { position: static; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-height: none; margin: 0 0 12px; padding: 0; border: 0; overflow: visible; }
+.remote-paired .library-sidebar { position: static; display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; max-height: none; margin: 0 0 12px; padding: 0; border: 0; overflow: visible; }
 .remote-paired .library-sidebar > .sidebar-label { display: none; }
 .remote-paired .library-sidebar > .sidebar-link { width: auto; min-height: 44px; }
-.remote-paired .sidebar-categories { display: contents; max-height: none; overflow: visible; }
+.remote-paired .sidebar-categories { display: contents; max-height: none; overflow: visible; -webkit-mask-image: none; mask-image: none; }
 .remote-paired .sidebar-category { max-width: 100%; }
 .remote-paired .sidebar-category .sidebar-link { min-height: 44px; }
 .remote-paired .category-star { width: 44px; height: 44px; }

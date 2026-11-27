@@ -2730,3 +2730,14 @@ form {
 .playback-stats span{color:#ffffffa8}
 .playback-stats b{font-weight:500;text-align:right;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:680px){.playback-stats{font-size:11px;padding:8px 10px}}
+
+/* Wide library layouts: the sidebar fills the visible height above the
+   floating navigation dock (24px from the bottom, 70px tall) and its category
+   list takes the rest, scrolling inside it. A fixed height measured from the
+   top of the screen ran the list past the bottom edge on car screens. */
+@media (min-width: 801px) {
+  .library-layout > .library-sidebar { display:flex; flex-direction:column; max-height:calc(100dvh - 100px - 110px); }
+  .library-layout > .library-sidebar > * { flex-shrink:0; }
+  .library-layout > .library-sidebar > .sidebar-categories { flex:1 1 auto; min-height:96px; max-height:none; padding-bottom:24px;
+    -webkit-mask-image:linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask-image:linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+}
