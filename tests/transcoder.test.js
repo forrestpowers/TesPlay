@@ -248,3 +248,12 @@ test("a connection address replaces DNS for the configured host only", async () 
   // The URL names a public address, but the connection goes to the configured host.
   await assert.rejects(requestRemote("http://203.0.113.40:4190/health", { connectHost: "transcoder.invalid", timeout: 2000 }), /could not be resolved/);
 });
+
+test("car mode explains a Pangolin sign-in redirect", async (t) => {
+  const { base, path } = await proxyFor(t, (_req, res) => {
+    res.writeHead(302, { location: "https://pangolin.example.com/auth/resource/1" });
+    res.end();
+  });
+  const body = await (await fetch(base + path)).json();
+  assert.match(body.error, /redirected TesPlay to a sign-in page\. Turn off the Pangolin login/);
+});

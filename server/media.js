@@ -581,7 +581,10 @@ export function createMediaService(ctx) {
           });
         } catch (error) {
           if (controller.signal.aborted) throw error;
-          const detail = error?.networkCode || (error?.status === 400 || /resolve/.test(error?.message || "") ? error.message.replace(/\.$/, "") : "");
+          // Pangolin answers a resource that still requires its login with a redirect to the sign-in page.
+          if (/authentication redirect/i.test(error?.message || ""))
+            return unavailable(502, `${transcoder.host} redirected TesPlay to a sign-in page. Turn off the Pangolin login (authentication) for that resource.`);
+          const detail = error?.networkCode || String(error?.message || "").replace(/\.$/, "");
           return unavailable(502, `TesPlay cannot reach the transcoder at ${transcoder.host}${transcoder.connectHost ? ` through ${transcoder.connectHost}` : ""}${detail ? ` (${detail})` : ""}. Check TRANSCODER_URL, the Pangolin resource and that the transcoder is running. If Pangolin runs on this same server, set TRANSCODER_CONNECT_HOST.`);
         }
         if (converted.statusCode >= 400) {
