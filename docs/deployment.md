@@ -105,6 +105,16 @@ Choose the Plex Home profile separately from the TesPlay household profile. A pr
 
 For SMB, mount the share with the host operating system. Add its local mount point to TesPlay, or configure `MEDIA_DIR` so Docker exposes that folder at `/media`. The server must be able to list/read it, and the mount must survive host restarts. No SMB username/password is requested by the app. Missing mounts can look like empty libraries; check the OS mount before changing app credentials.
 
+## Reset a forgotten password
+
+Household members' passwords are reset by the owner in **Settings → Household accounts**. To reset any account's password from the server, including the owner's, run the reset script where TesPlay's data lives:
+
+```sh
+docker exec -it tesplay node scripts/reset-password.mjs <username or email>
+```
+
+It prints a new generated password once and signs that account out on every device. To choose the password yourself, pipe it in with `--stdin` (for example `printf '%s' 'new password' | docker exec -i tesplay node scripts/reset-password.mjs <username> --stdin`); it needs at least 12 characters. For a native installation, run `node scripts/reset-password.mjs <username>` with `DATA_DIR` set to TesPlay's data folder.
+
 ## Backups and moving hosts
 
 Use `scripts/backup.mjs` rather than copying a live SQLite file alone: recent transactions may be in its WAL file. The helper uses SQLite `VACUUM INTO` and saves the matching encryption key. It does not copy media files, OS mount credentials, Cloudflare connector credentials or `.env`.
