@@ -201,7 +201,7 @@ export async function createApp(options = {}) {
   app.delete(["/api/media/:token", "/api/v1/media/:token"], ctx.media.releaseHandler);
   // Registrars share the gates above; keep authentication and remote scope
   // checks ahead of every account, profile, library and connection route.
-  registerSessionRoutes(app, { store, remote, publicUrl });
+  registerSessionRoutes(app, { store, remote, publicUrl, qrAuth });
   registerProfileRoutes(app, { store, getProfileId, authStatus });
   const requireConnectionManager=(req,res,next)=>req.session.scope!=='remote' && req.user.canManageConnections?next():next(httpError(403,'This account cannot manage connections.'));
   ctx.requireConnectionManager = requireConnectionManager;

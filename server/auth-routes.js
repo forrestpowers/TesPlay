@@ -88,7 +88,31 @@ export async function registerAuthRoutes(
   });
 }
 
-export function registerSessionRoutes(app, { store, remote, publicUrl }) {
+export function registerSessionRoutes(app, { store, remote, publicUrl, qrAuth }) {
+  const passwordLimit = rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 10,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: "Too many password attempts. Try again in 15 minutes." },
+  });
+  // Any signed-in account, including the owner, changes its own password here.
+  app.post("/api/account/password", passwordLimit, async (req, res) => {
+    if (req.session.scope !== "full")
+      throw httpError(403, "Change your password from a fully signed-in browser.");
+    const stored = store.passwordHashFor(req.user.id);
+    // 400 rather than 401: a wrong current password must not look like an expired session.
+    if (!stored || !(await verifyPassword(req.body?.currentPassword, stored)))
+      throw httpError(400, "Your current password is incorrect.");
+    const next = validatePassword(req.body?.newPassword);
+    if (await verifyPassword(next, stored))
+      throw httpError(400, "Choose a new password that differs from your current one.");
+    const signedOut = store.changePassword(req.user.id, await hashPassword(next), req.session.id);
+    for (const id of signedOut) remote.closeSession(id);
+    qrAuth?.revokeUser(req.user.id);
+    res.json({ ok: true, signedOut: signedOut.length });
+  });
   app.get("/api/browsers", (req, res) =>
     res.json({ browsers: store.listBrowsers(req.user.id, req.session.id) }),
   );

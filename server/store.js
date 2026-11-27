@@ -419,6 +419,22 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
       db.prepare("DELETE FROM sessions WHERE parent_session_id=?").run(id);
       db.prepare("DELETE FROM sessions WHERE id=?").run(id);
     },
+    /** Only for verifying a password; never returned to a client. */
+    passwordHashFor(userId) {
+      return db.prepare("SELECT password_hash FROM users WHERE id=?").get(userId)?.password_hash ?? null;
+    },
+    /**
+     * Sets a user's own new password and signs out their other sessions. The
+     * current session and the phone remotes paired with it stay signed in.
+     * Returns the ids of the sessions that were signed out.
+     */
+    changePassword(userId, passwordHash, keepSessionId) {
+      const others = db.prepare("SELECT id FROM sessions WHERE user_id=? AND id<>? AND (parent_session_id IS NULL OR parent_session_id<>?)")
+        .all(userId, keepSessionId, keepSessionId).map((row) => row.id);
+      db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(passwordHash, userId);
+      for (const id of others) this.deleteSession(id);
+      return others;
+    },
     createProfile(userId, name, color) {
       if (profiles(userId).length >= 8)
         throw httpError(400, "You can create up to eight profiles.");
