@@ -34,6 +34,9 @@ function output(profile) {
     "-b:v", `${kbps}k`, "-maxrate", `${Math.round(kbps * 1.2)}k`, "-bufsize", `${kbps * 2}k`,
     // A keyframe every two seconds lets the player join and recover quickly.
     "-g", String(profile.fps * 2),
+    // IPTV audio often has small timestamp gaps or jumps; resample against the
+    // timestamps so the player gets continuous sound instead of clicks.
+    "-af", "aresample=async=1000",
     "-c:a", "aac", "-b:a", `${Math.round(profile.audioKbps)}k`, "-ac", "2", "-ar", "48000",
     "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1",
   ];

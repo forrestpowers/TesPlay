@@ -24,6 +24,9 @@ export function transcoderConfig(env = process.env) {
     device: env.TRANSCODER_DEVICE || "/dev/dri/renderD128",
     encoder: ["auto", "vaapi", "vaapi-lp", "software"].includes(env.TRANSCODER_ENCODER) ? env.TRANSCODER_ENCODER : "auto",
     limit: number(env.TRANSCODE_LIMIT, 3, 1, 32),
+    // Seconds of converted output held back at the start and then sent at once,
+    // so the player begins with a buffer instead of playing at the live edge.
+    prebufferMs: number(env.TRANSCODE_PREBUFFER_MS, 3000, 0, 10000),
     // Provider addresses on a private network are refused unless listed here.
     allowedPrivateHosts: String(env.TRANSCODER_ALLOWED_PRIVATE_HOSTS || "").split(",").map((host) => host.trim()).filter(Boolean),
     profile: {
@@ -52,7 +55,7 @@ async function readJson(req) {
   catch { throw Object.assign(new Error("Send a JSON body."), { status: 400 }); }
 }
 
-export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_PROFILE, allowedPrivateHosts = [], request = requestRemote, log = console }) {
+export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_PROFILE, allowedPrivateHosts = [], prebufferMs = 0, request = requestRemote, log = console }) {
   const json = (res, status, body) => {
     if (res.headersSent) return res.destroy();
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
@@ -86,16 +89,35 @@ export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_P
       // The player chooses the size (720p or 480p); the bitrate follows it.
       const job = transcoder.start({ input: upstream, signal: controller.signal, profile: profileForHeight(profile, body?.height) });
       let sent = 0;
-      job.output.once("data", () => {
+      // A live conversion arrives in real time, so the player can only stay as
+      // far ahead as it starts. Hold the first seconds and send them at once.
+      let held = prebufferMs > 0 ? [] : null;
+      let holdTimer;
+      const release = () => {
+        clearTimeout(holdTimer);
+        if (!held) return;
+        for (const chunk of held) res.write(chunk);
+        held = null;
+      };
+      job.output.on("data", (chunk) => {
+        sent += chunk.length;
         if (!res.headersSent) res.writeHead(200, { "content-type": "video/mp2t", "cache-control": "no-store" });
+        if (held) {
+          held.push(chunk);
+          holdTimer ??= setTimeout(release, prebufferMs);
+          return;
+        }
+        if (!res.write(chunk)) {
+          job.output.pause();
+          res.once("drain", () => job.output.resume());
+        }
       });
-      job.output.on("data", (chunk) => { sent += chunk.length; });
-      job.output.pipe(res, { end: false });
       // A conversion that never produces output is stuck on the provider.
       const watchdog = setTimeout(() => { if (!sent) job.stop(); }, FIRST_BYTES_MS);
-      res.once("close", () => { clearTimeout(watchdog); job.stop(); });
+      res.once("close", () => { clearTimeout(watchdog); clearTimeout(holdTimer); job.stop(); });
       const { error, code, stderr } = await job.exit;
       clearTimeout(watchdog);
+      release();
       if (controller.signal.aborted || res.writableFinished) return;
       if (sent) return res.end();
       // FFmpeg only sees pipes, so its messages name no provider address or credential.
@@ -121,7 +143,7 @@ async function main() {
   }
   for (const [name, reason] of Object.entries(detected.failures)) console.warn(`Encoder ${name} unavailable: ${reason}`);
   const transcoder = createTranscoder({ ffmpeg: config.ffmpeg, limit: config.limit, encoder: detected.encoder, device: config.device, profile: config.profile });
-  const server = http.createServer(createTranscoderHandler({ token: config.token, transcoder, profile: config.profile, allowedPrivateHosts: config.allowedPrivateHosts }));
+  const server = http.createServer(createTranscoderHandler({ token: config.token, transcoder, profile: config.profile, allowedPrivateHosts: config.allowedPrivateHosts, prebufferMs: config.prebufferMs }));
   server.listen(config.port, "0.0.0.0", () =>
     console.log(`TesPlay car-mode transcoder on port ${config.port}: ${detected.encoder} encoder, ${config.profile.height}p${config.profile.fps}, up to ${config.limit} channels`));
   const stop = () => { server.close(); server.closeAllConnections(); };

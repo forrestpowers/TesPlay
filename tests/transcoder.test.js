@@ -257,3 +257,31 @@ test("car mode explains a Pangolin sign-in redirect", async (t) => {
   const body = await (await fetch(base + path)).json();
   assert.match(body.error, /redirected TesPlay to a sign-in page\. Turn off the Pangolin login/);
 });
+
+test("car mode resamples audio against its timestamps", () => {
+  for (const encoder of ["software", "vaapi", "vaapi-lp"]) {
+    const args = transcodeArguments({ encoder });
+    assert.match(args[args.indexOf("-af") + 1], /^aresample=async=/);
+  }
+});
+
+test("the transcoder holds the first output back so the player starts with a buffer", async (t) => {
+  const transcoder = { encoder: "software", active: 0, limit: 3, start() {
+    const output = new Readable({ read() {} });
+    let count = 0;
+    const timer = setInterval(() => { output.push(Buffer.alloc(188, 0x47)); if (++count === 10) { clearInterval(timer); output.push(null); } }, 20);
+    return { output, stop() { clearInterval(timer); }, exit: new Promise((resolve) => output.once("end", () => setTimeout(() => resolve({ code: 0 }), 5))) };
+  } };
+  const base = await serve(t, createTranscoderHandler({ token: TOKEN, transcoder, prebufferMs: 150,
+    request: async () => Object.assign(Readable.from([Buffer.alloc(188, 0x47)]), { statusCode: 200, headers: { "content-type": "video/mp2t" } }) }));
+  const started = performance.now();
+  const response = await fetch(`${base}/transcode`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ url: "http://203.0.113.5/live/u/p/1.ts" }) });
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  const waited = performance.now() - started;
+  assert.ok(waited >= 140, `first bytes after ${Math.round(waited)} ms`);
+  assert.ok(first.value.byteLength >= 188 * 3, "the held seconds arrive together");
+  let total = first.value.byteLength;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; total += value.byteLength; }
+  assert.equal(total, 188 * 10, "nothing is lost");
+});
