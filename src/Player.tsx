@@ -10,7 +10,7 @@ import { errorMessage } from "./api";
 import type { MediaItem, Playback, PlaybackSettings } from "./types";
 import EpisodeSelector from "./EpisodeSelector";
 import {resolvePlayback} from "./playback-selection";
-import { carModeChannel as channelOf, clearCarMode, readCarMode, writeCarMode } from "./device-preferences";
+import { carModeChannel as channelOf, clearCarMode, effectiveCarMode, writeCarModeOverride, type CarModeDefault } from "./device-preferences";
 import TesPlayer from "./TesPlayer";
 import { idleRemotePlayback, type RemotePlayback } from "./remote-state";
 export default function Player({
@@ -28,12 +28,15 @@ export default function Player({
   onNext,
   canTranscode = false,
   autoPlayNext = true,
+  defaultCarMode,
   remoteOnly = false,
 }: {
   item: MediaItem;
   resume?: number;
   canTranscode?: boolean;
   autoPlayNext?: boolean;
+  /** The account's car mode default for live channels; a choice made in the player overrides it per channel. */
+  defaultCarMode?: CarModeDefault;
   remoteOnly?: boolean;
   onClose: () => void;
   onRemoteState?: (state:RemotePlayback)=>void;
@@ -115,7 +118,7 @@ export default function Player({
     (async () => {
       try {
         // Car mode is a per-device choice for live IPTV; the server ignores it without a transcoder.
-        const carMode = item.type === 'live' && ['xtream','m3u'].includes(item.providerType || '') ? readCarMode(carModeChannel) : null;
+        const carMode = item.type === 'live' && ['xtream','m3u'].includes(item.providerType || '') ? effectiveCarMode(carModeChannel, defaultCarMode) : null;
         const p = await resolvePlayback(item,{...settings,compatibility:compatible,...(carMode?{carMode}:{})},controller.signal);
         if (!dead&&!resumeLoaded.current) {
           if (settings.startOver) resumeRef.current=0;
@@ -195,7 +198,7 @@ export default function Player({
         {!remoteOnly&&item.type==='episode'&&<div className="player-episode-picker">{episodesLoading?<p role="status">Loading seasons and episodes…</p>:episodesError?<p className="form-error" role="alert">{episodesError}</p>:episodes.length>0&&onNext?<EpisodeSelector compact items={episodes} current={item} onSelect={onNext}/>:null}</div>}
         {error && (
           <div className="player-error" role="alert">
-            <span>{error}{remoteOnly?" Choose another title on your phone.":""}</span>{!remoteOnly&&!playback&&<button className="button ghost small" onClick={()=>setResolveAttempt(n=>n+1)}>Try again</button>}{!remoteOnly&&!playback&&item.type==='live'&&['xtream','m3u'].includes(item.providerType||'')&&readCarMode(carModeChannel)&&<button className="button ghost small" onClick={()=>{writeCarMode(carModeChannel,null);setResolveAttempt(n=>n+1);}}>Play without car mode</button>}
+            <span>{error}{remoteOnly?" Choose another title on your phone.":""}</span>{!remoteOnly&&!playback&&<button className="button ghost small" onClick={()=>setResolveAttempt(n=>n+1)}>Try again</button>}{!remoteOnly&&!playback&&item.type==='live'&&['xtream','m3u'].includes(item.providerType||'')&&effectiveCarMode(carModeChannel, defaultCarMode)&&<button className="button ghost small" onClick={()=>{writeCarModeOverride(carModeChannel,'off');setResolveAttempt(n=>n+1);}}>Play without car mode</button>}
           </div>
         )}
         {!remoteOnly && <footer className={`player-footer ${ended && next ? "has-next" : ""}`}>

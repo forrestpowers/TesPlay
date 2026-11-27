@@ -1,6 +1,6 @@
 import type { Preferences } from './types';
 
-export const defaultAccountPreferences = { autoPlayNext: true, hideYouTubeShorts: false };
+export const defaultAccountPreferences: Preferences = { autoPlayNext: true, hideYouTubeShorts: false };
 export const legacyYouTubeShortsKey = 'tesplay.youtube.showShorts.v1';
 export const legacyYouTubeShortsOwnerKey = 'tesplay.youtube.showShorts.migrationOwner.v1';
 export type PreferencesSnapshot = { preferences: Preferences; ready: boolean; busy: boolean };

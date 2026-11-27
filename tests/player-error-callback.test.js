@@ -47,7 +47,7 @@ async function mount() {
     './TesPlayer': { default: TesPlayerStub },
     './EpisodeSelector': { default: () => null },
     './remote-state': { idleRemotePlayback: {} },
-    './device-preferences': { readCarMode: () => null, writeCarMode() {}, clearCarMode() {}, carModeChannel: item => `${item.connectionId || ''}:${item.type}:${item.id}` },
+    './device-preferences': { effectiveCarMode: () => null, writeCarModeOverride() {}, clearCarMode() {}, carModeChannel: item => `${item.connectionId || ''}:${item.type}:${item.id}` },
   };
   const exports = {};
   vm.runInNewContext(code, {

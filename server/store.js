@@ -359,11 +359,12 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
     preferences(userId) {
       const row = db
         .prepare(
-          "SELECT auto_play_next,hide_youtube_shorts FROM user_preferences WHERE user_id=?",
+          "SELECT auto_play_next,hide_youtube_shorts,car_mode FROM user_preferences WHERE user_id=?",
         )
         .get(userId);
       return {
         autoPlayNext: row ? Boolean(row.auto_play_next) : true,
+        ...(row?.car_mode ? { carMode: row.car_mode } : {}),
         ...(row?.hide_youtube_shorts != null
           ? { hideYouTubeShorts: Boolean(row.hide_youtube_shorts) }
           : {}),
@@ -376,10 +377,11 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
           : [];
       if (
         !fields.length ||
-        fields.some(
-          (field) =>
-            !["autoPlayNext", "hideYouTubeShorts"].includes(field) ||
-            typeof value[field] !== "boolean",
+        fields.some((field) =>
+          field === "carMode"
+            ? !["off", "720", "480"].includes(value[field])
+            : !["autoPlayNext", "hideYouTubeShorts"].includes(field) ||
+              typeof value[field] !== "boolean",
         ) ||
         typeof initializeYouTubeShorts !== "boolean" ||
         (initializeYouTubeShorts &&
@@ -399,9 +401,10 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
         const hideYouTubeShorts = Object.hasOwn(value, "hideYouTubeShorts")
           ? Number(value.hideYouTubeShorts)
           : null;
+        const carMode = Object.hasOwn(value, "carMode") ? value.carMode : null;
         db.prepare(
-          "INSERT INTO user_preferences (user_id,auto_play_next,hide_youtube_shorts) VALUES (?,COALESCE(?,1),?) ON CONFLICT(user_id) DO UPDATE SET auto_play_next=COALESCE(?,user_preferences.auto_play_next),hide_youtube_shorts=COALESCE(excluded.hide_youtube_shorts,user_preferences.hide_youtube_shorts)",
-        ).run(userId, autoPlayNext, hideYouTubeShorts, autoPlayNext);
+          "INSERT INTO user_preferences (user_id,auto_play_next,hide_youtube_shorts,car_mode) VALUES (?,COALESCE(?,1),?,?) ON CONFLICT(user_id) DO UPDATE SET auto_play_next=COALESCE(?,user_preferences.auto_play_next),hide_youtube_shorts=COALESCE(excluded.hide_youtube_shorts,user_preferences.hide_youtube_shorts),car_mode=COALESCE(excluded.car_mode,user_preferences.car_mode)",
+        ).run(userId, autoPlayNext, hideYouTubeShorts, carMode, autoPlayNext);
       }
       return this.preferences(userId);
     },

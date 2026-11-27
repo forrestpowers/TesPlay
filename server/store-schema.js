@@ -216,6 +216,16 @@ function migrateAccountPreferences(db) {
     db.exec(
       "ALTER TABLE user_preferences ADD COLUMN hide_youtube_shorts INTEGER CHECK(hide_youtube_shorts IN (0,1))",
     );
+  // Car mode default for new live channels: off, 720 or 480 (lines).
+  if (
+    !db
+      .prepare("PRAGMA table_info(user_preferences)")
+      .all()
+      .some((column) => column.name === "car_mode")
+  )
+    db.exec(
+      "ALTER TABLE user_preferences ADD COLUMN car_mode TEXT CHECK(car_mode IN ('off','720','480'))",
+    );
 }
 
 export function initializeStoreSchema(db, { itemKey }) {

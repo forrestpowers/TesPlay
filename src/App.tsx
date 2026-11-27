@@ -310,6 +310,9 @@ export default function App() {
   async function updateYouTubeShorts(hideYouTubeShorts: boolean) {
     await updatePreferences({ hideYouTubeShorts });
   }
+  async function updateCarMode(carMode: 'off' | '720' | '480') {
+    await updatePreferences({ carMode });
+  }
   useEffect(() => {
     const id = setTimeout(() => {
       setQuery(search.trim());
@@ -571,6 +574,7 @@ export default function App() {
       onProgress={saveProgress}
       next={preferencesReady ? (queueNavigation?.inQueue ? queueNavigation.next : nextEpisode) : undefined}
       autoPlayNext={preferencesReady && (!!queueNavigation?.inQueue || preferences.autoPlayNext)}
+      defaultCarMode={preferencesReady ? preferences.carMode : undefined}
       onNext={item=>open(item,{sourceId:'auto'})}/>
   </Suspense>;
   if (rearScreen)return <><Suspense fallback={<div className="boot"><Brand/></div>}><RearScreen auth={auth} roomId={roomId} paired={screenPaired} onPairState={setScreenPaired} onAuth={setAuth} onDisconnect={disconnectRearRemote} serverError={fatal}/></Suspense>{playerView}{stremioPicker}</>;
@@ -795,7 +799,7 @@ export default function App() {
               onConnect={() => connect(connections.some(c => c.type === "youtube") ? undefined : "youtube")} initialConnectionId={selectedConnection?.type === "youtube" ? selectedConnection.id : undefined} initialChannel={youtubeChannel} onStar={star} onClearQueue={()=>void updateQueue("clear").catch(e=>showToast(errorMessage(e)))} onRemoveQueue={item=>void updateQueue("remove",item).catch(e=>showToast(errorMessage(e)))} />
           </Suspense>
         )}
-        {view === "settings" && <Suspense fallback={<Busy label="Loading settings…"/>}><SettingsDashboard preferencesReady={preferencesReady} onHideYouTubeShorts={updateYouTubeShorts} onReloadPreferences={reloadPreferences} auth={auth} connections={connections} preferences={preferences} preferencesBusy={preferencesBusy} profileBusy={profileBusy} onAutoplay={updateAutoplay} onRemovedCurrent={reloadAuth} onReloadConnections={refreshManagedConnections} onBrowse={browse} onManageProfiles={()=>setProfileOpen(true)} onSwitchProfile={async id=>{
+        {view === "settings" && <Suspense fallback={<Busy label="Loading settings…"/>}><SettingsDashboard preferencesReady={preferencesReady} onHideYouTubeShorts={updateYouTubeShorts} onReloadPreferences={reloadPreferences} auth={auth} connections={connections} preferences={preferences} preferencesBusy={preferencesBusy} profileBusy={profileBusy} onAutoplay={updateAutoplay} onCarMode={updateCarMode} onRemovedCurrent={reloadAuth} onReloadConnections={refreshManagedConnections} onBrowse={browse} onManageProfiles={()=>setProfileOpen(true)} onSwitchProfile={async id=>{
           setProfileBusy(true);try{await api(`/profiles/${id}/select`,{});await reloadAuth();setPlayer(null);}catch(e){showToast(errorMessage(e));}finally{setProfileBusy(false);}
         }} phone={phone} onFullscreen={openFullscreen} onRemote={()=>navigate('remote')} onPairPhone={pairPhone} onHistory={()=>navigate('history')} onSignOut={async()=>{await api('/auth/logout',{});setPlayer(null);setRoomId('');setControllerRoom('');closePlaybackAudio();await reloadAuth();setView('home');}} onToast={showToast} initialConnection={initialConnection} onInitialUsed={()=>setInitialConnection(undefined)}/></Suspense>}
         </div>

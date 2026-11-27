@@ -233,6 +233,8 @@ export async function createApp(options = {}) {
       version: "0.1.0",
       publicUrl,
       remoteEnabled,
+      // Car mode is offered only when a transcoder is configured.
+      carModeAvailable: !!ctx.media?.carModeAvailable,
       preferences: store.preferences(req.user.id),
     };
   }

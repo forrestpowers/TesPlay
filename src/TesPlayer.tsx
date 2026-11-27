@@ -6,7 +6,7 @@ import LiveIndicator from "./LiveIndicator";
 import { Modal } from "./components";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import PlaybackStats from './PlaybackStats';
-import { carModeChannel, HALF_FRAME_RATE_KEY, PLAYBACK_STATS_KEY, readDevicePreference, writeCarMode, writeDevicePreference, type CarModeHeight } from './device-preferences';
+import { carModeChannel, HALF_FRAME_RATE_KEY, PLAYBACK_STATS_KEY, readDevicePreference, writeCarModeOverride, writeDevicePreference, type CarModeHeight } from './device-preferences';
 import { LoaderCircle, Radio, ChevronRight, ChevronLeft, Captions, Minus, Plus, Gauge, Languages, SkipBack, SkipForward } from 'lucide-react';
 import { createTesPlayerEngine, probeMediaCapabilities, parseSubtitles, activeCuesAt } from '@canvas-stream-player/player';
 import { DEFAULT_PLAYER_POLICY } from '@canvas-stream-player/contracts';
@@ -37,7 +37,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const [showStats, setShowStats] = useState(() => readDevicePreference(PLAYBACK_STATS_KEY));
   const [halfFrameRate, setHalfFrameRate] = useState(() => readDevicePreference(HALF_FRAME_RATE_KEY));
   const carModeHeight: CarModeHeight | null = playback.compatibility === 'video' ? (playback.carModeHeight === 480 ? 480 : 720) : null;
-  const chooseCarMode = (height: CarModeHeight | null) => { if (height === carModeHeight) return; writeCarMode(carModeChannel(item), height); setSettings(false); freshRetry.current(); };
+  const chooseCarMode = (height: CarModeHeight | null) => { if (height === carModeHeight) return; writeCarModeOverride(carModeChannel(item), height ?? 'off'); setSettings(false); freshRetry.current(); };
   const restartAt = useRef<number | null>(null);
   const getEngineSnapshot = useCallback(() => engine.current?.getSnapshot() ?? null, []);
   const [message, setMessage] = useState(INITIAL_MESSAGE);
@@ -275,7 +275,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
         {busy?<LoaderCircle className="spin" size={32}/>:audioUnlockRequired?<button className="button primary" onClick={()=>void toggle()}>Enable sound</button>:null}
         <span role="status">{busy?message:audioUnlockRequired?'Tap once to enable picture and sound. Then use your phone.':failed?'Choose another title on your phone.':'Paused · Use your phone to resume.'}</span>
       </div>) : (busy || snapshot?.phase !== 'playing' || showControls) && <div className="tesplayer-overlay">
-        {busy ? <LoaderCircle className="spin" size={32} /> : failed ? <><button className="button primary" onClick={() => { reportError.current('');clearMediaError();retries.current=0;freshRetry.current(); }}>Try again</button>{playback.compatibility === 'video' && <button className="button ghost" onClick={() => { reportError.current('');clearMediaError();retries.current=0;writeCarMode(carModeChannel(item),null);freshRetry.current(); }}>Play without car mode</button>}</> : audioUnlockRequired ? <button className="button primary" onClick={() => {reveal();void toggle();}}>Enable playback on this screen</button> : <button className="tesplayer-big-play" onClick={() => {reveal();void toggle();}} aria-label={snapshot?.phase === 'playing' ? 'Pause video' : snapshot?.phase === 'ended' ? 'Play again' : 'Play video'}><SutroIcon name={snapshot?.phase==='playing'?'pause':'play'}/></button>}
+        {busy ? <LoaderCircle className="spin" size={32} /> : failed ? <><button className="button primary" onClick={() => { reportError.current('');clearMediaError();retries.current=0;freshRetry.current(); }}>Try again</button>{playback.compatibility === 'video' && <button className="button ghost" onClick={() => { reportError.current('');clearMediaError();retries.current=0;writeCarModeOverride(carModeChannel(item),'off');freshRetry.current(); }}>Play without car mode</button>}</> : audioUnlockRequired ? <button className="button primary" onClick={() => {reveal();void toggle();}}>Enable playback on this screen</button> : <button className="tesplayer-big-play" onClick={() => {reveal();void toggle();}} aria-label={snapshot?.phase === 'playing' ? 'Pause video' : snapshot?.phase === 'ended' ? 'Play again' : 'Play video'}><SutroIcon name={snapshot?.phase==='playing'?'pause':'play'}/></button>}
         {(snapshot?.phase!=='playing' || audioUnlockRequired)&&<span role="status">{audioUnlockRequired ? 'Your phone is ready. Tap once here to start picture and sound.' : message}</span>}
       </div>}
       {showStats && <PlaybackStats getSnapshot={getEngineSnapshot} />}

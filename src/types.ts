@@ -70,7 +70,7 @@ export type Library = {
     updatedAt: string;
   }[];
 };
-export type Preferences = { autoPlayNext: boolean; hideYouTubeShorts?: boolean };
+export type Preferences = { autoPlayNext: boolean; hideYouTubeShorts?: boolean; carMode?: 'off' | '720' | '480' };
 export type PlayerPreferences = { audioLanguage: string | null; subtitleLanguage: string | null; subtitlesEnabled: boolean; qualityId: 'auto' | '1080p' | '720p' | '480p' };
 export type PlaybackSettings = { audioTrackId?: string; subtitleTrackId?: string; qualityId?: string; compatibility?: boolean; audioRemux?: boolean; carMode?: 720 | 480; startOver?: boolean; sourceId?: string };
 export type PlaybackChoice = { id: string; label: string; language?: string; codec?: string; selected?: boolean };
