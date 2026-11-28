@@ -69,6 +69,22 @@ export function titleNeedsConversion(probe) {
   return !!probe.audio && !["aac", "mp3", "mp2", "opus", "flac", "vorbis"].includes(probe.audio.codec);
 }
 
+/**
+ * How a probed IPTV movie or episode plays: null to play it directly, or the
+ * conversion. Car mode (720 or 480) converts any title to that size; otherwise
+ * only titles the browser cannot decode are converted, at up to 1080p. Films
+ * keep their own frame rate; 50/60 fps sources are halved.
+ */
+export function planTitleConversion(probe, carHeight = null) {
+  if (!probe?.video) return null;
+  if (!carHeight && !titleNeedsConversion(probe)) return null;
+  return {
+    height: carHeight || 1080,
+    ...(probe.video.fps > 31 ? { fps: 30 } : {}),
+    ...(carHeight ? { carModeHeight: carHeight } : {}),
+  };
+}
+
 export function paginate(items, query = {}) {
   const { page, limit, q, category } = pageData(query);
   const filtered = items.filter(
@@ -1105,9 +1121,12 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       if (requested !== null && !["audio", "video"].includes(requested)) throw providerError("Choose a valid compatibility option.");
       if (requested === "audio" && kind !== "live") throw providerError("Audio conversion is available for live channels only.");
       let compatibility = requested === "video" && (kind !== "live" || !media.carModeAvailable) ? null : requested;
-      const carMode = kind === "live" && media.carModeAvailable ? { carMode: true } : {};
+      // Car mode is offered for live channels and, on Xtream, for movies and episodes.
+      const carMode = media.carModeAvailable && (kind === "live" || c.type === "xtream") ? { carMode: true } : {};
       // Car mode sizes the player offers; 720p unless 480p is asked for.
       const carHeight = req.query.carHeight === "480" ? 480 : 720;
+      // A movie or episode in car mode is converted to that size even when it is H.264.
+      const titleCarHeight = requested === "video" && kind !== "live" && media.carModeAvailable ? carHeight : null;
       const conversion = () => compatibility === "video" ? { remux: "video", transcodeHeight: carHeight } : compatibility ? { remux: compatibility } : {};
       const converted = () => compatibility ? { compatibility, isLive: true, ...(compatibility === "video" ? { carModeHeight: carHeight } : {}) } : {};
       if (c.type === "xtream") {
@@ -1153,19 +1172,20 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
         // are converted to H.264 by the transcoder, from the requested position.
         if (kind !== "live" && media.carModeAvailable) {
           const probe = await probeTitle(c, `${kind}:${streamId}`, u.toString());
-          if (probe && titleNeedsConversion(probe)) {
+          const plan = planTitleConversion(probe, titleCarHeight);
+          if (plan) {
             const durationSeconds = probe.durationSeconds || (listedDuration > 0 ? Math.round(listedDuration) : null);
             const requested = Math.max(0, Math.floor(Number(req.query.start) || 0));
             const start = durationSeconds ? Math.min(requested, Math.max(0, durationSeconds - 5)) : requested;
             return res.json({
               url: media.register(req, c, {
                 url: u.toString(), allowedPrivateHosts: privateHosts(c.config.url), kind: "video",
-                remux: "vod", transcodeStart: start, transcodeHeight: 1080,
-                // Films keep their own frame rate; 50/60 fps sources are halved.
-                ...(probe.video?.fps > 31 ? { transcodeFps: 30 } : {}),
+                remux: "vod", transcodeStart: start, transcodeHeight: plan.height,
+                ...(plan.fps ? { transcodeFps: plan.fps } : {}),
               }),
               type: "video", streamKind: "continuous-ts", compatibility: "vod",
-              durationSeconds, startSeconds: start,
+              durationSeconds, startSeconds: start, ...carMode,
+              ...(plan.carModeHeight ? { carModeHeight: plan.carModeHeight } : {}),
             });
           }
         }

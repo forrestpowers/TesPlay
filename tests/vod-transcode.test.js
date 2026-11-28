@@ -11,7 +11,7 @@ import express from "express";
 import { createTranscoder, describeProbe, fileProbeArguments, transcodeArguments, FILE_FORMATS } from "../server/transcoder.js";
 import { createFileProbe, createInputRelay, createTranscoderHandler } from "../server/transcoder-service.js";
 import { createMediaService } from "../server/media.js";
-import { titleNeedsConversion } from "../server/providers.js";
+import { planTitleConversion, titleNeedsConversion } from "../server/providers.js";
 
 const run = promisify(execFile);
 const hasFfmpeg = await run("ffmpeg", ["-version"]).then(() => true, () => false);
@@ -52,6 +52,16 @@ test("only titles the browser cannot decode are converted", () => {
   assert.equal(titleNeedsConversion({ video: { codec: "h264" }, audio: { codec: "aac" } }), false);
   assert.equal(titleNeedsConversion({ video: { codec: "h264" }, audio: null }), false);
   assert.equal(titleNeedsConversion({ video: null, audio: { codec: "aac" } }), false, "nothing to convert without video");
+});
+
+test("car mode converts any movie to its size; otherwise only what the car cannot decode", () => {
+  const h264 = { video: { codec: "h264", fps: 23.976 }, audio: { codec: "aac" } };
+  const hevc60 = { video: { codec: "hevc", fps: 59.94 }, audio: { codec: "aac" } };
+  assert.equal(planTitleConversion(h264, null), null, "H.264 plays directly without car mode");
+  assert.deepEqual(planTitleConversion(h264, 480), { height: 480, carModeHeight: 480 });
+  assert.deepEqual(planTitleConversion(hevc60, null), { height: 1080, fps: 30 });
+  assert.deepEqual(planTitleConversion(hevc60, 720), { height: 720, fps: 30, carModeHeight: 720 });
+  assert.equal(planTitleConversion(null, 720), null, "without a probe the title plays directly");
 });
 
 test("the relay forwards byte ranges through the address checks and serves only live jobs", async (t) => {
