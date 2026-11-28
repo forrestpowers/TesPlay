@@ -107,7 +107,7 @@ test('owner creates members, shares encrypted connectors, resets passwords and d
   const visible=await m.request('/api/connections');assert.equal(visible.data.connections.length,1);assert.equal(visible.data.connections[0].shared,true);assert.ok(!JSON.stringify(visible.data).includes('private-fixture-key'));
   assert.equal((await m.request('/api/accounts')).status,403);
   assert.equal((await m.request('/api/accounts',{name:'Intruder',email:'another@tesplay.test',password})).status,403);
-  assert.equal((await m.request('/api/connections',{name:'Own connector',type:'local',config:{rootPath:'/tmp'}})).status,403);
+  assert.equal((await m.request('/api/connections',{name:'Own connector',type:'local',config:{rootPath:'/tmp'}})).status,400,'server folders are no longer offered');
   assert.equal((await m.request(`/api/connections/${c.id}/config`)).status,403);
   assert.equal((await m.request(`/api/youtube/auth?connectionId=${c.id}`)).status,403);
   const reset=await f.owner(`/api/accounts/${m.id}`,{password:'replacement member password'},'PATCH');assert.equal(reset.status,200);
@@ -162,7 +162,7 @@ test('owner deletes a member and their private state while keeping the owner, ot
 
 test('legacy demo saves no longer appear while connected titles and radio remain visible',async t=>{
   const f=await fixture(t),owner=f.store.findUser('owner@tesplay.test'),profile=f.store.profiles(owner.id)[0];
-  const c=f.connection('plex',{baseUrl:'https://plex.test',token:'private-fixture-token'});
+  const c=f.connection('xtream',{url:'https://iptv.example.test',username:'fixture',password:'private-fixture-token'});
   const demo={id:'sintel',title:'Sintel',type:'movie',source:'Open cinema'};
   const connected={...demo,connectionId:c.id};
   const radio={id:'station',title:'My radio station',type:'audio',source:'Radio'};
@@ -203,7 +203,7 @@ test('IPTV grants filter categories and reject direct playback and episode reque
   assert.equal((await m.request(`/api/catalog?connectionId=${c.id}&parentId=3`)).status,403);
   assert.equal((await m.request(`/api/episodes/next?connectionId=${c.id}&itemId=3:4:mp4`)).status,403);
   assert.equal((await m.request(`/api/playback?connectionId=${c.id}&kind=episode&itemId=3:4:mp4`)).status,403);
-  const other=f.connection('local',{rootPath:'/tmp'});assert.equal((await m.request(`/api/catalog?connectionId=${other.id}`)).status,403);
+  const other=f.connection('xtream',{url:'https://other.example.test',username:'fixture',password:'other-fixture'});assert.equal((await m.request(`/api/catalog?connectionId=${other.id}`)).status,403);
 });
 
 test('separate accounts stream concurrently and media references cannot cross accounts or survive revoked grants',async t=>{
@@ -216,35 +216,6 @@ test('separate accounts stream concurrently and media references cannot cross ac
   assert.equal((await m.request(ownerStream.data.url)).status,404);
   const [a,b]=await Promise.all([f.owner(ownerStream.data.url),m.request(memberStream.data.url)]);assert.equal(a.data,'fixture stream');assert.equal(b.data,'fixture stream');
   await f.owner(`/api/accounts/${m.id}`,{grants:[]},'PATCH');assert.equal((await m.request(memberStream.data.url)).status,403);assert.equal((await m.request('/api/connections')).data.connections.length,0);
-});
-
-test('Plex hubs preserve server lists, watched posters and full-list pagination while enforcing library grants',async t=>{
-  const movie={ratingKey:'11',title:'Watched film',type:'movie',librarySectionID:'6',viewCount:1,thumb:'/poster/11',Media:[{container:'mp4',videoCodec:'h264',audioCodec:'aac',Part:[{key:'/library/parts/11/movie.mp4'}]}]};
-  const unshared={...movie,ratingKey:'private',title:'Private film',librarySectionID:'7'};
-  const f=await fixture(t,{remoteData:async input=>{const u=new URL(input);let data;
-    if(u.hostname==='discover.provider.plex.tv')data={Metadata:[{ratingKey:'remote',guid:'plex://movie/fixture',title:'Watchlist title',type:'movie'}],totalSize:1};
-    else if(u.pathname==='/library/sections')data={Directory:[{key:'6',type:'movie',title:'Movies'},{key:'7',type:'show',title:'TV Shows'}]};
-    else if(u.pathname==='/hubs/sections/6')data={Hub:[{title:'Recently Added in Movies',key:'/library/sections/6/all?sort=addedAt:desc',Metadata:[movie]},{title:'Movies soon to be removed',key:'/library/collections/900/children',Metadata:[movie,unshared]}]};
-    else if(u.pathname==='/library/all')data={Metadata:[movie]};
-    else if(u.pathname==='/library/metadata/99')data={Metadata:[{ratingKey:'99',type:'show',librarySectionID:'7'}]};
-    else if(u.pathname==='/library/metadata/11')data={Metadata:[movie]};
-    else if(u.pathname==='/library/collections/900/children'||u.pathname==='/library/sections/6/all')data={Metadata:[movie,unshared],totalSize:125};
-    else throw Error('Unexpected Plex request '+u.pathname);
-    return JSON.stringify({MediaContainer:data});
-  }});
-  const c=f.connection('plex',{url:'https://plex.example.test',token:'private-plex-fixture',userToken:'private-account-fixture',ownerProfileId:(await f.owner('/api/auth/status')).data.activeProfileId});
-  const m=await f.member([grant(c.id,['movie'],{sections:['6']})]);
-  const sections=await m.request(`/api/plex/${c.id}/sections`);assert.deepEqual(sections.data.sections.map(s=>s.title),['Movies']);
-  const result=await m.request(`/api/plex/${c.id}/hubs?sectionId=6`);assert.equal(result.status,200);
-  assert.ok(result.data.hubs.some(h=>h.title==='Watchlist'));const hub=result.data.hubs.find(h=>h.title==='Movies soon to be removed');
-  assert.equal(hub.items.length,1);
-  assert.equal(hub.items[0].watched,true);assert.equal(hub.items[0].artwork,'poster');assert.ok(!JSON.stringify(result.data).includes('private-plex-fixture'));
-  const full=await m.request(`/api/plex/${c.id}/list?listId=${encodeURIComponent(hub.id)}&page=2`);assert.equal(full.status,200);assert.equal(full.data.hasMore,true);assert.equal(full.data.items[0].id,'11');assert.equal(full.data.items.length,1);
-  assert.equal((await m.request(`/api/plex/${c.id}/hubs?sectionId=7`)).status,403);
-  const folder=Buffer.from('/library/metadata/99/children').toString('base64url');assert.equal((await m.request(`/api/catalog?connectionId=${c.id}&parentId=${folder}`)).status,403);
-  assert.equal((await m.request(`/api/playback?connectionId=${c.id}&itemId=11&kind=movie`)).status,200);
-  const fake=f.store.sealMedia({purpose:'plex-list',connectionId:c.id,sectionId:'6',kind:'movie',path:'https://evil.example/secret'});
-  assert.equal((await m.request(`/api/plex/${c.id}/list?listId=${fake}`)).status,400);
 });
 
 test('starred YouTube feeds and ordered watch playlists are isolated by profile and persist',async t=>{
@@ -291,7 +262,7 @@ test('existing YouTube favorites migrate once into the ordered watch playlist',a
   let store=createStore({dataDir:dir});const owner=store.createOwner({name:'Owner',email:'queue@tesplay.test',passwordHash:await hashPassword(password)});
   const c=store.saveConnection(owner.id,{type:'youtube',name:'API',config:{authMode:'apiKey',apiKey:'fixture'}}),p=store.profiles(owner.id)[0];
   for(const id of ['abcdefghijk','lmnopqrstuv'])store.toggleFavorite(p.id,{id,type:'video',title:id,source:'API',connectionId:c.id});
-  store.toggleFavorite(p.id,{id:'movie',type:'movie',title:'Retained movie',source:'Plex'});
+  store.toggleFavorite(p.id,{id:'movie',type:'movie',title:'Retained movie',source:'IPTV'});
   store.db.prepare("DELETE FROM schema_migrations WHERE name='youtube-watch-playlist'").run();store.close();
   store=createStore({dataDir:dir});assert.deepEqual(store.queue(p.id).map(i=>i.id),['abcdefghijk','lmnopqrstuv']);assert.deepEqual(store.libraryState(p.id).favorites.map(i=>i.id),['movie']);store.close();
   store=createStore({dataDir:dir});assert.equal(store.queue(p.id).length,2);assert.deepEqual(store.db.prepare('PRAGMA foreign_key_check').all(),[]);store.close();
@@ -343,62 +314,28 @@ test('subtitle preference belongs to the selected profile, survives selection, a
  const member=await f.member();assert.equal((await member.request(`/api/profiles/${second.id}`,{},'DELETE')).status,404);
 });
 
-test('Plex continuity reads linked-profile history/watchlist and playback checkpoints sync without losing local progress on failure',async t=>{
-  const calls=[];let fail=false;
-  const movie={ratingKey:'11',type:'movie',title:'Film',librarySectionID:'6',duration:120000,viewOffset:45000,lastViewedAt:1790000000,viewCount:1,guid:'plex://movie/11',Media:[{container:'mp4',videoCodec:'h264',audioCodec:'aac',Part:[{key:'/library/parts/11/file.mp4',Stream:[]}]}]};
-  const blocked={...movie,ratingKey:'12',title:'Private',librarySectionID:'7'};
-  const f=await fixture(t,{remoteData:async(input,options)=>{const u=new URL(input);calls.push({u,method:options.method||'GET',token:options.headers['X-Plex-Token'],session:options.headers['X-Plex-Session-Identifier']});if(u.pathname==='/:/timeline'){if(fail)throw Error('Plex offline');return '';}if(u.pathname==='/:/scrobble')return '';let data={};if(u.pathname==='/library/sections')data={Directory:[{key:'6',title:'Movies',type:'movie'},{key:'7',title:'Private',type:'movie'}]};else if(u.hostname==='discover.provider.plex.tv')data={Metadata:[movie]};else if(u.pathname==='/library/all')data={Metadata:[movie]};else if(u.pathname.endsWith('/all'))data={Metadata:[movie,blocked]};else if(u.pathname==='/library/metadata/11')data={Metadata:[movie]};else if(u.pathname==='/library/metadata/12')data={Metadata:[blocked]};return JSON.stringify({MediaContainer:data});}});
-  const profile=(await f.owner('/api/auth/status')).data.activeProfileId;
-  const c=f.connection('plex',{url:'https://plex.example.test',token:'owner-secret',userToken:'cloud-secret',ownerProfileId:profile,profileTokens:{[profile]:{token:'linked-profile-secret'}}});
-  const result=await f.owner(`/api/plex/${c.id}/continuity`);assert.equal(result.status,200);assert.equal(result.data.progress.find(p=>p.item.id==='11').seconds,45);assert.equal(result.data.watchlist[0].id,'11');assert.ok(calls.every(c=>c.token==='linked-profile-secret'));assert.ok(!JSON.stringify(result.data).includes('secret'));
-  calls.length=0;
-  const item=result.data.progress.find(p=>p.item.id==='11').item;
-  assert.equal((await f.owner('/api/library/progress',{item,seconds:55,duration:120,state:'paused'})).status,200);
-  let timeline=calls.find(c=>c.u.pathname==='/:/timeline');assert.equal(timeline.u.searchParams.get('time'),'55000');assert.equal(timeline.u.searchParams.get('state'),'paused');assert.equal(timeline.token,'linked-profile-secret');assert.equal(timeline.method,'POST');assert.match(timeline.session,/^[a-f0-9]{64}$/);assert.ok(!calls.some(c=>c.u.pathname==='/:/scrobble'));
-  calls.length=0;await f.owner('/api/library/progress',{item,seconds:120,duration:120,state:'stopped'});assert.ok(calls.some(c=>c.u.pathname==='/:/scrobble'&&c.method==='PUT'));
-  fail=true;const failed=await f.owner('/api/library/progress',{item,seconds:70,duration:120,state:'paused'});assert.equal(failed.status,200);assert.match(failed.data.plexSyncError,/Saved in TesPlay/);assert.equal((await f.owner('/api/library/state')).data.progress[0].seconds,70);
-  fail=false;calls.length=0;
-  const m=await f.member([grant(c.id,['movie'],{sections:['6']})]);
-  const restricted=await m.request(`/api/plex/${c.id}/continuity`);assert.equal(restricted.status,200);assert.deepEqual(restricted.data.progress.map(p=>p.item.id),['11']);assert.ok(!calls.some(c=>c.u.pathname==='/library/sections/7/all'));
-  assert.equal((await m.request(`/api/playback/options?connectionId=${c.id}&itemId=12&kind=movie`)).status,403);
-  assert.equal((await m.request(`/api/playback/options?connectionId=${c.id}&itemId=11&kind=movie`)).status,200);
-  const before=calls.length;await m.request('/api/library/progress',{item:{...item,id:'12'},seconds:10,duration:120,state:'playing'});assert.ok(!calls.slice(before).some(c=>c.u.pathname==='/:/timeline'));
-  assert.equal((await f.client()(`/api/plex/${c.id}/continuity`)).status,401);
-});
-
-test('Plex episode selector inherits the authorized series library when allLeaves entries omit section metadata',async t=>{
-  const f=await fixture(t,{remoteData:async input=>{const u=new URL(input);return JSON.stringify({MediaContainer:{Metadata:u.pathname.endsWith('/allLeaves')?[{ratingKey:'101',type:'episode',title:'Pilot',parentIndex:1,index:1,Media:[{}]}]:[{ratingKey:'900',type:'show',librarySectionID:'7'}]}});}});
-  const c=f.connection('plex',{url:'https://plex.example',token:'fixture'}),m=await f.member([grant(c.id,['series'],{sections:['7']})]);
-  const show=Buffer.from('/library/metadata/900/children').toString('base64url');const result=await m.request(`/api/episodes?connectionId=${c.id}&itemId=${show}&kind=series`);assert.equal(result.status,200);assert.equal(result.data.items[0].sectionId,'7');assert.equal(result.data.items[0].type,'episode');
-});
-
-test('a QR remote can read its screen profile episode catalogue and continuity while retaining connection grants and playback restrictions',async t=>{
+test('a QR remote can read its screen profile episode catalogue while retaining connection grants and playback restrictions',async t=>{
   const f=await fixture(t,{remoteData:async input=>{
-    const u=new URL(input);
-    const content=u.pathname==='/library/sections'?{Directory:[{key:'7',type:'show',title:'Allowed shows'}]}:
-      u.pathname.endsWith('/allLeaves')?{Metadata:[{ratingKey:'101',type:'episode',title:'Pilot',parentIndex:1,index:1,Media:[{}]}]}:
-      u.pathname.startsWith('/library/metadata/')?{Metadata:[{ratingKey:'900',type:'show',librarySectionID:'7'}]}:{Metadata:[]};
-    return JSON.stringify({MediaContainer:content});
+    const action=new URL(input).searchParams.get('action');
+    if(action==='get_series')return[{series_id:900,name:'Allowed show',category_id:7}];
+    if(action==='get_series_info')return{info:{name:'Allowed show'},episodes:{'1':[{id:101,episode_num:1,title:'Pilot',container_extension:'mp4'}]}};
+    throw Error('Unexpected provider request '+action);
   }});
-  const c=f.connection('plex',{url:'https://plex.example',token:'private-fixture-token'});
-  const hidden=f.connection('plex',{url:'https://other-plex.example',token:'hidden-fixture-token'});
-  const m=await f.member([grant(c.id,['series'],{sections:['7']})]);
+  const c=f.connection('xtream',{url:'https://iptv.example.test',username:'fixture',password:'private-fixture-token'});
+  const hidden=f.connection('xtream',{url:'https://other-iptv.example.test',username:'fixture',password:'hidden-fixture-token'});
+  const m=await f.member([grant(c.id,['series'],{categories:['series:7']})]);
   const qr=(await m.request('/api/remote/pair',{})).data,phone=f.client();
   const redeemed=await phone('/api/auth/remote/redeem',{code:qr.code,token:qr.token});
   assert.equal(redeemed.data.scope,'remote');assert.equal(redeemed.data.activeProfileId,m.profileId);
-  const show=Buffer.from('/library/metadata/900/children').toString('base64url');
-  const result=await phone(`/api/episodes?connectionId=${c.id}&itemId=${show}&kind=series`);
-  assert.equal(result.status,200);assert.equal(result.data.items[0].sectionId,'7');
+  const result=await phone(`/api/episodes?connectionId=${c.id}&itemId=900&kind=series`);
+  assert.equal(result.status,200);assert.equal(result.data.items[0].accessCategory,'series:7');
   assert.equal(result.data.items[0].seasonNumber,1);assert.equal(result.data.items[0].episodeNumber,1);
   assert.ok(!JSON.stringify(result.data).includes('private-fixture-token'));
-  assert.equal((await phone(`/api/plex/${c.id}/continuity`)).status,200);
-  assert.equal((await phone(`/api/episodes?connectionId=${hidden.id}&itemId=${show}&kind=series`)).status,403);
-  assert.equal((await phone(`/api/plex/${hidden.id}/continuity`)).status,403);
+  assert.equal((await phone(`/api/episodes?connectionId=${hidden.id}&itemId=900&kind=series`)).status,403);
   for(const endpoint of ['/api/playback?itemId=101','/api/playback/options?itemId=101','/api/browsers'])assert.equal((await phone(endpoint)).status,403);
   assert.equal((await phone('/api/episodes',{})).status,403);
   assert.equal((await phone('/api/library/progress',{item:result.data.items[0],seconds:20,duration:120})).status,403);
 });
-
 test('household creation saves independent playback defaults and profile writes cannot cross accounts',async t=>{
   const f=await fixture(t),defaults={audioLanguage:'de',subtitleLanguage:'nl',subtitlesEnabled:true,qualityId:'480p'};
   const created=await f.owner('/api/accounts',{name:'New viewer',username:'new-viewer',password,playbackDefaults:defaults});
@@ -466,10 +403,8 @@ test('household accounts manage personal connections alongside read-only shared 
   const f = await fixture(t);
   const content = '#EXTM3U\n#EXTINF:-1 group-title="Sports",Sport\nhttps://streams.example.test/sport.m3u8';
   const shared = f.connection('m3u', {content}, 'Shared TV');
-  const sharedPlex = f.connection('plex', {url: 'https://plex.example.test', token: 'owner-secret'});
-  const member = await f.member([grant(shared.id, ['live']), grant(sharedPlex.id, ['movie'])]);
+  const member = await f.member([grant(shared.id, ['live'])]);
   assert.equal((await member.request('/api/auth/status')).data.user.canManageConnections, true);
-  assert.equal((await member.request('/api/connection-capabilities')).data.canUseLocal, false);
   const other = await f.owner('/api/accounts', {name: 'Other', username: 'other', password, grants: []});
   const otherClient = f.client();
   await otherClient('/api/auth/login', {username: 'other', password});
@@ -491,7 +426,7 @@ test('household accounts manage personal connections alongside read-only shared 
   assert.equal((await member.request('/api/library/favorites', {item: catalog.data.items[0]})).status, 200);
   assert.equal((await member.request('/api/library/state')).data.favorites[0].connectionId, own.id);
   const visible = (await member.request('/api/connections')).data.connections;
-  assert.equal(visible.length, 3);
+  assert.equal(visible.length, 2);
   assert.ok(!visible.find(c => c.id === own.id).shared);
   assert.equal(visible.find(c => c.id === shared.id).shared, true);
   assert.ok(!JSON.stringify(visible).includes('owner-secret'));
@@ -507,12 +442,8 @@ test('household accounts manage personal connections alongside read-only shared 
     [`/api/connections/${shared.id}`, {name: 'Changed'}, 'PUT'],
     [`/api/connections/${shared.id}`, {}, 'DELETE'],
     ['/api/connections', {id: shared.id, type: 'm3u', config: {content}}],
-    [`/api/plex/${sharedPlex.id}/servers`],
-    [`/api/plex/${sharedPlex.id}/server`, {id: 'server', url: 'https://plex.example.test'}],
-    [`/api/plex/${sharedPlex.id}/profiles`],
-    [`/api/plex/${sharedPlex.id}/profile`, {id: '1'}],
   ]) assert.equal((await member.request(...args)).status, 403, args[0]);
-  assert.equal((await member.request('/api/connections', {type: 'local', config: {rootPath: '/tmp'}})).status, 403);
+  assert.equal((await member.request('/api/connections', {type: 'local', config: {rootPath: '/tmp'}})).status, 400);
   assert.equal((await member.request(`/api/connections/${own.id}`, {name: 'Renamed TV', config: {loadedCategories: []}}, 'PUT')).status, 200);
   assert.deepEqual((await member.request(`/api/catalog?connectionId=${own.id}&kind=live`)).data.items, []);
   await f.owner(`/api/accounts/${member.id}`, {grants: []}, 'PATCH');
@@ -521,4 +452,26 @@ test('household accounts manage personal connections alongside read-only shared 
   assert.deepEqual((await member.request('/api/connections')).data.connections, []);
   assert.equal(f.store.getConnection(f.store.findUser('owner@tesplay.test').id, shared.id).name, 'Shared TV');
   assert.ok(f.store.findUserById(other.data.account.id));
+});
+
+test('a saved Plex or Stremio connection still lists and can be removed, but no longer browses or plays', async t => {
+  const f = await fixture(t), owner = f.store.findUser('owner@tesplay.test'), profile = f.store.profiles(owner.id)[0];
+  const plex = f.connection('plex', {url: 'https://plex.example.test', token: 'retired-plex-secret'}, 'Old Plex');
+  const stremio = f.connection('stremio', {authKey: 'retired-stremio-secret'}, 'Old Stremio');
+  const movie = {id: '11', title: 'Old film', type: 'movie', source: 'Old Plex', connectionId: plex.id};
+  f.store.toggleFavorite(profile.id, movie); f.store.saveProgress(profile.id, movie, 45, 120);
+  const listed = (await f.owner('/api/connections')).data.connections;
+  assert.deepEqual(listed.map(c => c.type).sort(), ['plex', 'stremio']);
+  assert.ok(!JSON.stringify(listed).includes('retired-'));
+  for (const path of [`/api/catalog?connectionId=${plex.id}`, `/api/playback?connectionId=${plex.id}&itemId=11&kind=movie`, `/api/episodes?connectionId=${stremio.id}&itemId=tt1&kind=series`]) {
+    const response = await f.owner(path);
+    assert.equal(response.status, 410, path);
+    assert.match(response.data.error, /(Plex|Stremio) connections are no longer supported\. Remove it in Settings\./);
+  }
+  assert.equal((await f.owner(`/api/connections/${plex.id}/test`, {})).status, 410);
+  assert.equal((await f.owner(`/api/connections/${plex.id}`, {name: 'Renamed'}, 'PUT')).status, 400, 'it cannot be edited');
+  const state = (await f.owner('/api/library/state')).data;
+  assert.deepEqual([state.favorites.length, state.progress.length], [0, 0], 'its saved titles are hidden');
+  assert.equal((await f.owner(`/api/connections/${plex.id}`, {}, 'DELETE')).status, 200);
+  assert.deepEqual((await f.owner('/api/connections')).data.connections.map(c => c.id), [stremio.id]);
 });

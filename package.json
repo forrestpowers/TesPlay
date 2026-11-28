@@ -23,7 +23,6 @@
     "cookie-parser": "^1.4.7",
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
-    "fast-xml-parser": "^5.2.5",
     "googlevideo": "^5.0.1",
     "helmet": "^8.1.0",
     "lucide-react": "^0.468.0",

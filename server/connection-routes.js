@@ -1,23 +1,24 @@
 import { cleanText, httpError } from "./security.js";
 import { validateLoadedCategories } from './iptv-selection.js';
 
-const supportedConnections = [
-  "xtream",
-  "m3u",
-  "plex",
-  "drive",
-  "local",
-  "youtube",
-  "stremio",
-];
+const supportedConnections = ["xtream", "m3u", "youtube"];
+// Connection types TesPlay no longer offers. Saved rows of these types still
+// list in Settings so they can be removed, but nothing browses or plays them.
+const retiredConnections = {
+  plex: "Plex",
+  stremio: "Stremio",
+  drive: "Google Drive",
+  local: "Server folder",
+};
+export const isRetiredConnection = (c) => Object.hasOwn(retiredConnections, c?.type);
+export function assertSupportedConnection(c) {
+  if (isRetiredConnection(c))
+    throw httpError(410, `${retiredConnections[c.type]} connections are no longer supported. Remove it in Settings.`);
+  return c;
+}
 const editablePublicConfigFields = new Set([
   "clientId",
   "tvClientId",
-  "folderId",
-  "rootPath",
-  "output",
-  "transcode",
-  "maxBitrate",
   "authMode",
 ]);
 
@@ -58,8 +59,8 @@ export function validateConnection(value, existing) {
         400,
         "Other connection settings must be smaller than 24 KB.",
       );
-  } else if (Buffer.byteLength(JSON.stringify(merged), "utf8") > (type === 'stremio' ? 512_000 : 24_000))
-    throw httpError(400, `Connection settings must be smaller than ${type === 'stremio' ? '512' : '24'} KB.`);
+  } else if (Buffer.byteLength(JSON.stringify(merged), "utf8") > 24_000)
+    throw httpError(400, "Connection settings must be smaller than 24 KB.");
   return { type, name, ...(config === undefined ? {} : { config }) };
 }
 
@@ -72,13 +73,12 @@ export function createConnectionContext(store) {
   return {
     getManagedConnection,
     getConnection(req, id) {
-      return store.visibleConnection(req.user.id, id);
+      return assertSupportedConnection(store.visibleConnection(req.user.id, id));
     },
     listConnections(req) {
       return store.visibleConnections(req.user.id, true);
     },
     saveConnection(req, value, { allowShared = false } = {}) {
-      if(value.type==='local' && req.user.role!=='owner')throw httpError(403,'Only the server owner can connect folders on the server.');
       const existing = value.id
         ? (allowShared ? store.visibleConnection(req.user.id, value.id) : getManagedConnection(req, value.id))
         : null;
@@ -113,14 +113,6 @@ export function registerConnectionRoutes(app, { store, ctx, requireOwner }) {
       ),
     });
   });
-  app.use('/api/connections', (req, _res, next) => {
-    if (['POST', 'PUT'].includes(req.method)) {
-      const existing = req.method === 'PUT' && /^\/[A-Za-z0-9-]+$/.test(req.path) ? ctx.getConnection(req, req.path.slice(1)) : null;
-      if ((existing?.type || req.body?.type) === 'stremio' && Object.keys(req.body?.config || {}).length)
-        return next(httpError(400, 'Use Stremio settings to manage this connection and its addons.'));
-    }
-    next();
-  });
   app.post("/api/connections", requireOwner, (req, res) =>
     res.status(201).json({ connection: ctx.saveConnection(req, req.body) }),
   );
@@ -140,7 +132,7 @@ export function registerConnectionRoutes(app, { store, ctx, requireOwner }) {
           )
         : config;
     if (
-      ["drive", "youtube"].includes(existing.type) &&
+      existing.type === "youtube" &&
       safeUpdate &&
       typeof safeUpdate === "object" &&
       ["clientId", "clientSecret"].some(

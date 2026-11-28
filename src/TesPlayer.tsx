@@ -14,15 +14,14 @@ import type { MediaItem, Playback, PlayerPreferences } from './types';
 import { defaultPlayerPreferences, preferredSubtitleTrack } from './player-preferences';
 import { createTesPlayAdapter, TesPlaySourceError } from './tesplayer-adapter';
 import { registerAacMainRelabelDecoder } from './aac-main-decoder';
-import {startPlexPlaybackHeartbeat} from './plex-playback-heartbeat';
 
 const time = (seconds: number) => {
   const whole = Math.floor(Math.max(0, seconds));
   return whole >= 3600 ? `${Math.floor(whole / 3600)}:${String(Math.floor(whole / 60) % 60).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}` : `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 };
 const INITIAL_MESSAGE = 'Press play to begin';
-export default function TesPlayer({ playback, item, resume, plexCompatibility, canTranscode, onCompatibilityChange, onRetry, onVodSeek, getAudioContext, autoStart, onProgress, onEnded, onPlaying, onError, onRemoteState, previous, next, onNavigate, remoteOnly = false }: {
-  playback: Playback; item: MediaItem; resume: number; plexCompatibility: boolean; canTranscode: boolean; onCompatibilityChange:(value:boolean)=>void; onRetry:()=>void;
+export default function TesPlayer({ playback, item, resume, onRetry, onVodSeek, getAudioContext, autoStart, onProgress, onEnded, onPlaying, onError, onRemoteState, previous, next, onNavigate, remoteOnly = false }: {
+  playback: Playback; item: MediaItem; resume: number; onRetry:()=>void;
   /** Restart a converted movie or episode at this position in the title. */
   onVodSeek?:(seconds:number)=>void;
   getAudioContext: () => AudioContext | undefined; autoStart: boolean;
@@ -55,11 +54,10 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const [message, setMessage] = useState(INITIAL_MESSAGE);
   const [busy, setBusy] = useState(true);
   const [failed, setFailed] = useState(false);
-  const retries=useRef(0), retryPending=useRef(false), retryTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined), lastPosition=useRef(resume),lastDuration=useRef(0);
+  const retries=useRef(0), lastPosition=useRef(resume),lastDuration=useRef(0);
   const freshRetry=useRef(onRetry);freshRetry.current=onRetry;
   const [subtitleMenu,setSubtitleMenu]=useState(false),[audioMenu,setAudioMenu]=useState(false);
   const subtitlePreferences=useRef<PlayerPreferences>(defaultPlayerPreferences);
-  useEffect(()=>()=>clearTimeout(retryTimer.current),[]);
   const [scrub, setScrub] = useState<number | null>(null);
   const surface=useRef<HTMLDivElement>(null);
   const controls=useRef<HTMLDivElement>(null);
@@ -107,8 +105,8 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const progress = useRef(onProgress), ended = useRef(onEnded), reportError = useRef(onError);
   progress.current = onProgress; ended.current = onEnded; reportError.current = onError;
   const setupQueue = useRef<Promise<void>>(Promise.resolve());
-  const options = useRef({ resume, item, plexCompatibility });
-  options.current = { resume, item, plexCompatibility };
+  const options = useRef({ resume, item });
+  options.current = { resume, item };
   const adapterRef = useRef<Awaited<ReturnType<typeof createTesPlayAdapter>> | null>(null);
   const error = (reason: unknown) => {
     const typed = reason as { code?: string };
@@ -118,12 +116,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     console.warn('[TesPlayer] playback error', typed?.code ?? '', reason instanceof Error ? reason.message : reason, (reason as { safeCause?: string })?.safeCause ?? '');
     // A codec the browser cannot decode surfaces as an exhausted recovery; name the real cause instead.
     const unsupported = adapterRef.current?.compatibilityFailure;
-    const text = reason instanceof TesPlaySourceError ? reason.message : unavailable ? 'This browser does not support TesPlayer canvas playback. Use an updated browser with WebCodecs enabled.' : unsupported && ['RECOVERY_EXHAUSTED','DEMUX_FAILED','DECODE_FAILED'].includes(typed?.code || '') ? `${unsupported} Try another channel.` : typed?.code ? `Playback could not continue (${typed.code}${reason instanceof Error && reason.message ? `: ${reason.message}` : ''}). ${playback.provider === 'plex' ? 'Try again or choose Plex compatibility for this title.' : 'Reopen this title or try another stream.'}` : 'This source could not play. Check its connection and browser codec support, then try again.';
-    if(playback.provider==='plex' && ['DEMUX_FAILED','NETWORK_TIMEOUT','RECOVERY_EXHAUSTED','DECODE_FAILED'].includes(typed?.code||'') && retries.current<2){
-      if(retryPending.current)return;retryPending.current=true;retries.current++;
-      progress.current(lastPosition.current,lastDuration.current);setBusy(true);setMessage('Reconnecting to your stream');
-      retryTimer.current=setTimeout(()=>freshRetry.current(),750);return;
-    }
+    const text = reason instanceof TesPlaySourceError ? reason.message : unavailable ? 'This browser does not support TesPlayer canvas playback. Use an updated browser with WebCodecs enabled.' : unsupported && ['RECOVERY_EXHAUSTED','DEMUX_FAILED','DECODE_FAILED'].includes(typed?.code || '') ? `${unsupported} Try another channel.` : typed?.code ? `Playback could not continue (${typed.code}${reason instanceof Error && reason.message ? `: ${reason.message}` : ''}). Reopen this title or try another stream.` : 'This source could not play. Check its connection and browser codec support, then try again.';
     setMessage(text); setFailed(true); setBusy(false); reportError.current(text);
     // Name what the server said about the failed stream (car mode, a provider refusal), not just the code.
     const explained = ['DEMUX_FAILED','NETWORK_TIMEOUT','NETWORK_FAILED','RECOVERY_EXHAUSTED'].includes(typed?.code || '') ? recentMediaError() : null;
@@ -140,7 +133,6 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     let didPlay = false;
     let didComplete = false;
     let lastSavedPhase = '';
-    retryPending.current=false;
     adapterRef.current = null;
     setSnapshot(null); setBusy(true); setFailed(false); setMessage('Getting your stream ready');
     const save = (completed = false, stopped = false) => {
@@ -161,7 +153,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
         subtitlePreferences.current=preferences;
         if (controller.signal.aborted) return;
         if (!capabilities.canvas2d || (playback.type !== 'audio' && !capabilities.webCodecs.videoDecoder)) throw new Error('Canvas playback is unavailable.');
-        const adapter = await createTesPlayAdapter(playback, options.current.item, controller.signal, options.current.plexCompatibility);
+        const adapter = await createTesPlayAdapter(playback, options.current.item, controller.signal);
         adapterRef.current = adapter;
         if (controller.signal.aborted || !canvas.current) return;
         const audioContext = getAudioContext();
@@ -188,7 +180,6 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
         });
         // A live channel always joins at its live edge: a position saved earlier means nothing in a new live stream.
         await active.load({ session: adapter.session, resumePositionSeconds: adapter.session.isLive || vod ? null : resumeAt || null, autoplay: autoStart, startAtLiveEdge: adapter.session.isLive, preferredQualityId: adapter.session.selectedQualityId ?? null, preferredAudioTrackId: adapter.session.selectedAudioTrackId ?? null, preferredSubtitleTrackId: playback.settings?.subtitleTrackId && playback.settings.subtitleTrackId !== 'default' ? playback.settings.subtitleTrackId==='off'?null:adapter.session.subtitles.find(t=>t.id===playback.settings?.subtitleTrackId)?.id||null : preferredSubtitleTrack(adapter.session.subtitles,preferences)?.id || null, signedAvOffsetMs: 0 }, controller.signal);
-        startPlexPlaybackHeartbeat(playback, controller.signal, () => !!active && ['ready','playing','paused','seeking','stalled'].includes(active.getSnapshot().phase));
         if (!controller.signal.aborted) { setBusy(false); if(active.getSnapshot().phase!=='playing')setMessage(INITIAL_MESSAGE); }
       } catch (reason) { if (!controller.signal.aborted) error(reason); }
     });
@@ -307,7 +298,6 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
           <input className="tesplayer-volume" aria-label="Volume" type="range" min="0" max="1" step="0.05" value={snapshot?.volume ?? 1} disabled={!snapshot} onChange={(e) => void dispatch({ type: 'set-volume', volume: Number(e.target.value) })} />
         </div>
         <div className="tesplayer-secondary-controls">
-          {canTranscode&&<button className={`player-mode-toggle ${!plexCompatibility?'enabled':''}`} role="switch" aria-checked={!plexCompatibility} aria-label="Auto playback" title={plexCompatibility?'Compatibility mode':'Automatic playback'} onClick={()=>onCompatibilityChange(!plexCompatibility)}><span className="toggle-track"><i/></span><span>{plexCompatibility?'Compatibility':'Auto'}</span></button>}
           <button className={`icon-button ${snapshot?.selectedSubtitleTrackId?'active':''}`} aria-label="Choose subtitles" aria-expanded={subtitleMenu} disabled={!snapshot} onClick={subtitleToggle}><Captions size={22}/></button>
           <button className={`icon-button ${audioMenu?'active':''}`} aria-label="Choose audio track" aria-expanded={audioMenu} disabled={!snapshot} onClick={()=>{setAudioMenu(open=>!open);setSubtitleMenu(false);setSettings(false);}}><Languages size={22}/></button>
           <button className="icon-button" aria-label="Player settings" aria-expanded={settings} onClick={()=>{setSettings(value=>!value);setSubtitleMenu(false);setAudioMenu(false);}}><SutroIcon name="settings"/></button>

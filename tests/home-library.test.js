@@ -5,7 +5,7 @@ import ts from 'typescript';
 const source = ts.transpileModule(fs.readFileSync(new URL('../src/home-library.ts', import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
 const { loadHomeConnection, homeFeatures } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 const connection = (type, id = type) => ({ id, name: type, type, configured: true });
-const item = (id, type = 'movie', c = 'plex') => ({ id, title: id, type, connectionId: c, source: c });
+const item = (id, type = 'movie', c = 'iptv') => ({ id, title: id, type, connectionId: c, source: c });
 test('IPTV Home bundles account previews, keeps highlights balanced, and skips unselected stars', async () => {
   const {bundleIptvHomeShelves} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
   const first = {...connection('xtream','first'),loadedCategories:['movie:1']}, second = connection('xtream','second');
@@ -16,21 +16,6 @@ test('IPTV Home bundles account previews, keeps highlights balanced, and skips u
   const paths=[];
   await loadHomeConnection(first,async path=>{paths.push(path);return{items:[]};},new AbortController().signal,[{connectionId:first.id,kind:'category',id:'live:1',title:'News'}]);
   assert.deepEqual(paths,[],'no movie or series previews, and a starred category outside the loaded selection is skipped');
-});
-test('Plex home previews expand library sections and retain healthy libraries when another fails', async () => {
-  const paths = [];
-  const result = await loadHomeConnection(connection('plex'), async path => {
-    const p = new URL(path, 'https://tesplay.test').searchParams; paths.push(p);
-    assert.equal(p.get('limit'), '12');
-    if (!p.get('parentId')) return { items: [item('films', 'folder'), item('shows', 'folder')] };
-    if (p.get('parentId') === 'shows') throw Error('Provider unavailable');
-    return { items: [item('Actual film')] };
-  }, new AbortController().signal);
-  assert.equal(paths.length, 3);
-  assert.equal(result.shelves[0].items[0].title, 'Actual film');
-  assert.equal(result.shelves[0].parent.id, 'films');
-  assert.match(result.issues[0], /shows.*Provider unavailable/);
-  assert.deepEqual(homeFeatures(result.shelves).map(i => i.title), ['Actual film']);
 });
 test('IPTV home requests only starred live categories, without movie or series previews', async () => {
   const seen=[];
@@ -69,30 +54,18 @@ test('YouTube signed in on the screen shows the latest from your subscriptions o
   const signedOut = await loadHomeConnection({ ...signedIn, oauthAuthorized: false }, () => { throw Error('Must not request the feed signed out'); }, new AbortController().signal);
   assert.deepEqual(signedOut, { shelves: [], issues: [] });
 });
-test('Drive and local home previews bound folder expansion and preserve direct files', async () => {
-  for (const type of ['drive', 'local']) {
-    let reads = 0;
-    const result = await loadHomeConnection(connection(type), async path => {
-      reads++;
-      const parent = new URL(path, 'https://tesplay.test').searchParams.get('parentId');
-      return { items: parent ? [item(parent + '-video', 'video', type)] : [item('root-video', 'video', type), ...Array.from({ length: 20 }, (_, i) => item(String(i), 'folder', type))] };
-    }, new AbortController().signal);
-    assert.equal(reads, 4);
-    assert.equal(result.shelves.length, 4);
-    assert.equal(result.shelves[0].items[0].id, 'root-video');
-  }
-});
 test('featured titles alternate providers and cannot become folder demos on an empty or failed library', async () => {
-  const shelves = [{ connectionId: 'plex', items: [item('folder', 'folder'), item('one'), item('two')] }, { connectionId: 'youtube', items: [item('upload', 'video', 'youtube')] }];
+  const shelves = [{ connectionId: 'iptv', items: [item('folder', 'folder'), item('one'), item('two')] }, { connectionId: 'youtube', items: [item('upload', 'video', 'youtube')] }];
   assert.deepEqual(homeFeatures(shelves).map(i => i.id), ['one', 'upload', 'two']);
   assert.deepEqual(homeFeatures([]), []);
-  const failed = await loadHomeConnection(connection('plex'), async () => { throw Error('Connection failed'); }, new AbortController().signal);
+  const signedIn = { ...connection('youtube'), authMode: 'innertube', oauthAuthorized: true };
+  const failed = await loadHomeConnection(signedIn, async () => { throw Error('Connection failed'); }, new AbortController().signal);
   assert.deepEqual(failed.shelves, []);
   assert.equal(failed.issues[0], 'Connection failed');
 });
 test('aborted home requests reject instead of publishing rows for the previous profile', async () => {
   const controller = new AbortController();
-  await assert.rejects(loadHomeConnection(connection('plex'), async () => { controller.abort(); return { items: [item('old-profile')] }; }, controller.signal), { name: 'AbortError' });
+  await assert.rejects(loadHomeConnection({ ...connection('youtube'), authMode: 'innertube', oauthAuthorized: true }, async () => { controller.abort(); return { items: [item('old-profile')] }; }, controller.signal), { name: 'AbortError' });
 });
 
 test('YouTube home keeps each starred channel rail in newest-first upload order',async()=>{
@@ -104,9 +77,9 @@ test('YouTube home keeps each starred channel rail in newest-first upload order'
 const browserSource=ts.transpileModule(fs.readFileSync(new URL('../src/library-browser.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
 const {librarySources,unifiedShelves}=await import('data:text/javascript;base64,'+Buffer.from(browserSource).toString('base64'));
 test('shared library sources retain other connectors without mutating the connected accounts',()=>{
-  const connections=['plex','youtube','xtream','m3u','drive','local','stremio','youtube'].map((type,index)=>connection(type,String(index)));
-  assert.deepEqual(librarySources(connections).map(c=>c.type),['plex','xtream','m3u','drive','local','stremio']);
-  assert.equal(connections.length,8);
+  const connections=['youtube','xtream','m3u','youtube'].map((type,index)=>connection(type,String(index)));
+  assert.deepEqual(librarySources(connections).map(c=>c.type),['xtream','m3u']);
+  assert.equal(connections.length,4);
   assert.deepEqual(librarySources(connections.filter(c=>c.type==='youtube')),[]);
 });
 test('Live TV, Movies and Shows never request YouTube feeds, including authorized accounts and refreshes',async()=>{
@@ -117,14 +90,6 @@ test('Live TV, Movies and Shows never request YouTube feeds, including authorize
     assert.deepEqual(result,[]);
   }
 });
-test('unified Movies and Series expand Plex sections instead of treating Plex as an IPTV root',async()=>{
-  for(const mode of ['movies','series']){
-    const wanted=mode==='movies'?'movie':'series',paths=[];
-    const result=await unifiedShelves(connection('plex'),mode,async path=>{paths.push(path);if(path.endsWith('/sections'))return{sections:[{id:'6',title:'Movies',kind:'movie',folderId:'films'},{id:'7',title:'TV shows',kind:'series',folderId:'shows'}]};const p=new URL(path,'https://example.test').searchParams;assert.equal(p.get('kind'),'all');assert.equal(p.get('parentId'),wanted==='movie'?'films':'shows');return{items:[item('Real Plex title',wanted)]};},new AbortController().signal);
-    assert.equal(result.length,1);assert.equal(result[0].items[0].type,wanted);assert.equal(paths.length,2);
-  }
-});
-
 test('Home includes starred channels beyond the first feed page without repeating offsets',async()=>{
   const offsets=[];
   const result=await loadHomeConnection({...connection('youtube'),authMode:'oauth',oauthAuthorized:true},async path=>{
@@ -135,9 +100,9 @@ test('Home includes starred channels beyond the first feed page without repeatin
 });
 
 test('six highlights balance three connectors and select their newest videos before older or live content',()=>{
- const shelves=['plex','xtream','youtube'].map(connectionId=>({connectionId,items:[item('channel','live',connectionId),{...item('series container','series',connectionId),addedAt:'2026-10-01T00:00:00Z'},...Array.from({length:5},(_,i)=>({...item(`${connectionId}-${i}`,connectionId==='youtube'?'video':'movie',connectionId),addedAt:new Date(2026,0,i+1).toISOString()}))]}));
+ const shelves=['m3u','xtream','youtube'].map(connectionId=>({connectionId,items:[item('channel','live',connectionId),{...item('series container','series',connectionId),addedAt:'2026-10-01T00:00:00Z'},...Array.from({length:5},(_,i)=>({...item(`${connectionId}-${i}`,connectionId==='youtube'?'video':'movie',connectionId),addedAt:new Date(2026,0,i+1).toISOString()}))]}));
  const featured=homeFeatures(shelves);assert.equal(featured.length,6);
- for(const c of ['plex','xtream','youtube'])assert.deepEqual(featured.filter(i=>i.connectionId===c).map(i=>i.id),[`${c}-4`,`${c}-3`]);
+ for(const c of ['m3u','xtream','youtube'])assert.deepEqual(featured.filter(i=>i.connectionId===c).map(i=>i.id),[`${c}-4`,`${c}-3`]);
  assert.ok(featured.every(i=>!['live','series'].includes(i.type)));
 });
 

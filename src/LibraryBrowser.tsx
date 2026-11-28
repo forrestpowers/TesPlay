@@ -9,7 +9,7 @@ import {invalidateHomePreview} from './home-library';
 import { librarySources, unifiedShelves } from './library-browser';
 import { episodeSeasons, episodesForSeason } from './episodes';
 import { filterYouTubeItems, filterYouTubeShelves } from './youtube-visibility';
-import type { CatalogResult, LibraryMode, LibraryShelf, PlexSection } from './library-browser';
+import type { CatalogResult, LibraryMode, LibraryShelf } from './library-browser';
 import { bundleIptvShelves, isIptv } from './iptv-library';
 import IptvBundleBrowser from './IptvBundleBrowser';
 type Props = {connections:Connection[];library:Library;hideYouTubeShorts?:boolean;onOpen:(i:MediaItem)=>void;onBrowseSeries?:(i:MediaItem)=>void;onFavorite:(i:MediaItem)=>void;onStar:(s:Starred)=>void;onConnect:()=>void;onYouTube:()=>void;onGuide:(i:MediaItem)=>void;query:string};
@@ -68,40 +68,6 @@ export function SourceBrowser({connection:c,initialParent,initialKind='all',init
   </div>;
 }
 
-function PlexBrowser({connection:c,initialParent,props}:{connection:Connection;initialParent?:MediaItem;props:Props}) {
-  const [sections,setSections]=useState<PlexSection[]>([]),[sectionId,setSectionId]=useState(initialParent?.sectionId||''),[folder,setFolder]=useState<MediaItem|undefined>(initialParent);
-  const [list,setList]=useState<{id:string;title:string}|null>(null),[page,setPage]=useState(1),[draft,setDraft]=useState(props.query),[query,setQuery]=useState(props.query),[refresh,setRefresh]=useState(0);
-  const [hubs,setHubs]=useState<{id:string;title:string;items:MediaItem[]}[]>([]),[result,setResult]=useState<CatalogResult>({items:[]}),[busy,setBusy]=useState(true),[error,setError]=useState(''),[notes,setNotes]=useState<string[]>([]);
-  useEffect(()=>{const controller=new AbortController();void api<{sections:PlexSection[]}>(`/plex/${c.id}/sections`,undefined,undefined,controller.signal).then(r=>{if(controller.signal.aborted)return;setSections(r.sections);setSectionId(id=>r.sections.some(s=>s.id===id)?id:r.sections[0]?.id||'');if(!r.sections.length)setBusy(false);}).catch(e=>{if(!controller.signal.aborted){setError(errorMessage(e));setBusy(false);}});return()=>controller.abort();},[c.id,refresh]);
-  useEffect(()=>{const t=setTimeout(()=>{setQuery(draft);setPage(1);},300);return()=>clearTimeout(t);},[draft]);
-  useEffect(()=>setDraft(props.query),[props.query]);
-  const section=sections.find(s=>s.id===sectionId);
-  useEffect(()=>{
-    if(!sectionId)return;
-    const controller=new AbortController();setBusy(true);setError('');
-    const request=list?`/plex/${c.id}/list?${new URLSearchParams({listId:list.id,page:String(page),q:query})}`:folder?`/catalog?${new URLSearchParams({connectionId:c.id,parentId:folder.id,page:String(page),q:query})}`:query?`/catalog?${new URLSearchParams({connectionId:c.id,parentId:section?.folderId||'',page:String(page),q:query})}`:`/plex/${c.id}/hubs?sectionId=${sectionId}`;
-    void api<CatalogResult&{hubs?:typeof hubs;notes?:string[]}>(request,undefined,undefined,controller.signal).then(r=>{if(controller.signal.aborted)return;setResult({items:r.items||[],hasMore:r.hasMore});setHubs(r.hubs||[]);setNotes(r.notes||[]);}).catch(e=>{if(!controller.signal.aborted)setError(errorMessage(e));}).finally(()=>{if(!controller.signal.aborted)setBusy(false);});
-    return()=>controller.abort();
-  },[c.id,sectionId,section?.folderId,folder?.id,list?.id,page,query,refresh]);
-  const choose=(s:PlexSection)=>{setSectionId(s.id);setFolder(undefined);setList(null);setPage(1);setDraft('');};
-  const open=(item:MediaItem)=>{if(props.onBrowseSeries&&(item.type==='series'||item.type==='folder'&&!!item.seriesId)){props.onBrowseSeries(item);return;}if(item.type==='folder'||item.type==='series'){setFolder(item);setList(null);setPage(1);setDraft('');}else props.onOpen(item);};
-  const more=(hub:{id:string;title:string})=>{setList(hub);setFolder(undefined);setPage(1);setDraft('');};
-  const visibleHubs=filterYouTubeShelves(hubs,props.hideYouTubeShorts||false,props.connections,props.library.progress);
-  const visibleItems=filterYouTubeItems(result.items,props.hideYouTubeShorts||false,props.connections,props.library.progress);
-  const ordered=[...sections].sort((a,b)=>Number(starred(props.library,{connectionId:c.id,kind:'section',id:b.id,title:b.title}))-Number(starred(props.library,{connectionId:c.id,kind:'section',id:a.id,title:a.title})));
-  return <div className="library-layout">
-    <aside className="library-sidebar" aria-label="Plex libraries"><div className="sidebar-label">Plex libraries</div>{ordered.map(s=><div className="sidebar-category" key={s.id}><button className={`sidebar-link ${s.id===sectionId?'selected':''}`} onClick={()=>choose(s)}>{s.kind==='series'?<Tv size={18}/>:s.kind==='audio'?<Radio size={18}/>:<Film size={18}/>} {s.title}</button><StarsButton value={{connectionId:c.id,kind:'section',id:s.id,title:s.title}} props={props}/></div>)}</aside>
-    <div className="library-main"><div className="library-heading"><div><span className="eyebrow">{c.name}</span><h1>{list?.title||folder?.title||section?.title||'Plex'}</h1></div><RefreshButton label="Refresh Plex lists" onRefresh={()=>setRefresh(n=>n+1)}/></div>
-      {(list||folder)&&section&&<button className="text-button library-back" onClick={()=>choose(section)}><ArrowLeft size={17}/>Back to {section.title}</button>}
-      <SearchBox query={draft} onChange={setDraft}/>
-      {notes.map(note=><p className="form-help" key={note}>{note}</p>)}
-      {error&&<div className="form-error" role="alert">{error}</div>}
-      {busy?<Busy label="Loading your Plex library…"/>:visibleHubs.length?visibleHubs.map(h=><Row key={h.id} title={h.title} items={h.items} onOpen={open} onFavorite={props.onFavorite} isSaved={i=>saved(props.library,i)} progress={i=>progress(props.library,i)} more={()=>more(h)}/>):visibleItems.length?<Grid items={visibleItems} props={props} onOpen={open}/>:!error&&<Empty title="No titles in this library">Choose another Plex library or search.</Empty>}
-      {(page>1||result.hasMore)&&<div className="pagination"><button className="button ghost" disabled={page===1||busy} onClick={()=>setPage(p=>p-1)}>Previous</button><span>Page {page}</span><button className="button ghost" disabled={!result.hasMore||busy} onClick={()=>setPage(p=>p+1)}>Next<ArrowRight size={16}/></button></div>}
-    </div>
-  </div>;
-}
-
 export default function LibraryBrowser({mode,selectedConnection,initialParent,initialKind,initialCategory, ...props}:Props&{mode:LibraryMode;selectedConnection:Connection|null;initialParent?:MediaItem;initialKind?:string;initialCategory?:string}) {
   const sources=useMemo(()=>librarySources(props.connections),[props.connections]);
   const [filterId,setFilterId]=useState(''),[draft,setDraft]=useState(props.query),[query,setQuery]=useState(props.query),[refresh,setRefresh]=useState(0),[detail,setDetail]=useState<LibraryShelf|null>(null);
@@ -118,13 +84,13 @@ export default function LibraryBrowser({mode,selectedConnection,initialParent,in
     return()=>controller.abort();
   },[mode,sources,filterId,refresh]);
   const bundle = (connection:Connection,wanted?:string,category?:string,onBack?:()=>void) => <IptvBundleBrowser connections={props.connections} library={props.library} onStar={props.onStar} onOpen={props.onOpen} onConnect={props.onConnect} query={props.query} initialConnection={connection} initialKind={wanted} initialCategory={category} onBack={onBack} renderItems={(items,onOpen)=><Grid items={items} props={props} onOpen={onOpen}/>} renderParent={(parent,back)=>{const c=props.connections.find(c=>c.id===parent.connectionId);return c?<SourceBrowser key={`${c.id}:${parent.id}`} connection={c} initialParent={parent} initialKind="series" props={props} onBack={back}/>:null;}}/>;
-  if(mode==='catalog'&&selectedConnection) return <section className="page-section library-page">{isIptv(selectedConnection)&&!initialParent?bundle(selectedConnection,initialKind,initialCategory):selectedConnection.type==='plex'?<PlexBrowser key={`${selectedConnection.id}:${initialParent?.id||''}`} connection={selectedConnection} initialParent={initialParent} props={props}/>:<SourceBrowser key={`${selectedConnection.id}:${initialParent?.id||''}:${initialKind}`} connection={selectedConnection} initialParent={initialParent} initialKind={initialKind} initialCategory={initialCategory} props={props}/>}</section>;
+  if(mode==='catalog'&&selectedConnection) return <section className="page-section library-page">{isIptv(selectedConnection)&&!initialParent?bundle(selectedConnection,initialKind,initialCategory):<SourceBrowser key={`${selectedConnection.id}:${initialParent?.id||''}:${initialKind}`} connection={selectedConnection} initialParent={initialParent} initialKind={initialKind} initialCategory={initialCategory} props={props}/>}</section>;
   if(detail) return <section className="page-section library-page">{isIptv(detail.connection)?bundle(detail.connection,detail.kind,undefined,()=>setDetail(null)):<SourceBrowser key={detail.id} connection={detail.connection} initialParent={detail.parent} initialKind={detail.kind} initialCategory={detail.category} props={props} onBack={()=>setDetail(null)}/>}</section>;
   const allShelves=bundleIptvShelves(sources.flatMap(c=>shelves[c.id]||[]));
   const matches=(i:MediaItem)=>!query||`${i.title} ${i.subtitle||''}`.toLowerCase().includes(query.toLowerCase());
   const visible=filterYouTubeShelves(allShelves,props.hideYouTubeShorts||false,props.connections,props.library.progress).map(s=>({...s,items:s.items.filter(matches)})).filter(s=>s.items.length);
   return <section className="page-section library-page"><div className="library-layout">
-    <aside className="library-sidebar" aria-label="Library sources"><div className="sidebar-label">Your sources</div><button className={`sidebar-link ${!filterId?'selected':''}`} onClick={()=>setFilterId('')}>All connections</button>{sources.some(isIptv)&&<button className={`sidebar-link ${filterId==='iptv'?'selected':''}`} onClick={()=>setFilterId('iptv')}><Radio size={18}/>IPTV</button>}{sources.filter(c=>!isIptv(c)).map(c=><button className={`sidebar-link ${filterId===c.id?'selected':''}`} key={c.id} onClick={()=>setFilterId(c.id)}>{c.type==='plex'?<Film size={18}/>:<Folder size={18}/>} {c.name}</button>)}</aside>
+    <aside className="library-sidebar" aria-label="Library sources"><div className="sidebar-label">Your sources</div><button className={`sidebar-link ${!filterId?'selected':''}`} onClick={()=>setFilterId('')}>All connections</button>{sources.some(isIptv)&&<button className={`sidebar-link ${filterId==='iptv'?'selected':''}`} onClick={()=>setFilterId('iptv')}><Radio size={18}/>IPTV</button>}{sources.filter(c=>!isIptv(c)).map(c=><button className={`sidebar-link ${filterId===c.id?'selected':''}`} key={c.id} onClick={()=>setFilterId(c.id)}><Folder size={18}/> {c.name}</button>)}</aside>
     <div className="library-main"><div className="library-heading"><div><span className="eyebrow">YOUR COLLECTION, TOGETHER</span><h1>{mode==='series'?'TV shows':mode==='live'?'Live TV':'Movies'}</h1><p>Browse your collection by connection.</p></div><RefreshButton label="Refresh all libraries" onRefresh={()=>setRefresh(n=>n+1)}/></div>
       <SearchBox query={draft} onChange={setDraft}/>
       {sources.map(c=>errors[c.id]&&<div className="home-source-status" role="status" key={c.id}><div><strong>{c.name}</strong><p>{errors[c.id]}</p></div></div>)}

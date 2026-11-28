@@ -514,10 +514,6 @@ html:has(.cinema-remote),body:has(.cinema-remote){height:100%;min-width:0;overfl
 .remote-video-panel label { display: grid; gap: 8px; }
 .remote-video-panel label > span, .remote-video-panel small { color: #a1a1aa; }
 .remote-video-panel input { min-width: 0; width: 100%; }
-.remote-video-panel .remote-video-compatibility { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; margin-top: 18px; cursor: pointer; }
-.remote-video-panel .remote-video-compatibility input { width: 18px; min-height: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: #f56545; }
-.remote-video-compatibility span { font-size: 13px; }
-.remote-video-compatibility small { display: block; margin-top: 5px; line-height: 1.4; }
 .remote-video-file { padding: 18px; border: 1px dashed #ffffff30; border-radius: 12px; background: #ffffff05; }
 .remote-video-file input { font-size: 12px; padding: 8px 0; background: none; border: 0; }
 .remote-video-selected { overflow-wrap: anywhere; }

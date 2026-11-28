@@ -29,12 +29,7 @@ export async function loadHomeConnection(c: Connection, request: Request, signal
   };
   try {
     if (!c.configured) return { shelves, issues: ['Finish setting up this connection in Connections.'] };
-    if (c.type === 'stremio') {
-      const root = await request(`/stremio/${c.id}/catalogs`, signal);
-      const catalogs = (root.catalogs || []).filter(entry => !c.access || c.access.kinds.includes(entry.type)).slice(0, 8);
-      collect(await Promise.allSettled(catalogs.map(entry => catalog(entry.type, '', entry.id))), catalogs.map(entry=>entry.name),
-        (result,index)=>shelf(catalogs[index].id,catalogs[index].name,result.items,{kind:catalogs[index].type,category:catalogs[index].id}));
-    } else if (c.type === 'youtube') {
+    if (c.type === 'youtube') {
       // YouTube signed in on the screen (InnerTube): the latest uploads from your subscriptions.
       if (c.authMode === 'innertube') {
         if (!c.oauthAuthorized) return { shelves, issues: [] };
@@ -63,14 +58,6 @@ export async function loadHomeConnection(c: Connection, request: Request, signal
       collect(await Promise.allSettled(kinds.map(k => catalog(k))), names, (r, index) => shelf(kinds[index], `${c.name} · ${names[index]}`, r.items, { kind: kinds[index] }));
       const categories=stars.filter(s=>s.connectionId===c.id && s.kind==='category' && s.id.startsWith('live:') && loaded(s.id) && (!c.access || c.access.kinds.includes('live')));
       collect(await Promise.allSettled(categories.map(s=>catalog('live','',s.id))),categories.map(s=>s.title),(r,index)=>shelf(categories[index].id,`${c.name} · Live TV · ${categories[index].title}`,r.items,{kind:'live',category:categories[index].id}));
-    } else if (['plex', 'local', 'drive'].includes(c.type)) {
-      const root = await catalog(); signal.throwIfAborted();
-      const folders = root.items.filter(item => item.type === 'folder').slice(0, c.type === 'plex' ? 6 : 3);
-      const titles = root.items.filter(item => item.type !== 'folder');
-      if (titles.length || !folders.length) shelf('root', c.name, titles);
-      collect(await Promise.allSettled(folders.map(f => catalog(c.type==='plex' && f.contentKind==='series'?'episode':'all', f.id))), folders.map(f => f.title), (r, index) => shelf(folders[index].id, `${c.name} · ${folders[index].title}`, r.items, { parent: folders[index] }));
-      // Keep folders browsable if every child library failed, without substituting demos.
-      if (!shelves.length && root.items.length) shelf('libraries', c.name, root.items);
     } else if (c.type === 'm3u') {
       const categories=stars.filter(s=>s.connectionId===c.id && s.kind==='category' && (!Array.isArray(c.loadedCategories)||c.loadedCategories.includes(s.id)));
       collect(await Promise.allSettled(categories.map(s=>catalog('live','',s.id))),categories.map(s=>s.title),(r,index)=>shelf(categories[index].id,`${c.name} · Live TV · ${categories[index].title}`,r.items,{kind:'live',category:categories[index].id}));

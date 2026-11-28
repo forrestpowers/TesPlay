@@ -514,9 +514,9 @@ test("saved account, session, credentials and profile progress survive a server 
   const token = "long-session-token-for-persistence-testing";
   const session = store.createSession(owner.id, token);
   const connection = store.saveConnection(owner.id, {
-    type: "plex",
-    name: "My Plex",
-    config: { token: "persistent-private-token" },
+    type: "xtream",
+    name: "My IPTV",
+    config: { password: "persistent-private-token" },
   });
   store.saveProgress(session.profileId, item, 120, 900);
   const artwork = {
@@ -534,7 +534,7 @@ test("saved account, session, credentials and profile progress survive a server 
   assert.deepEqual(store.openMedia(sealedArtwork), artwork);
   assert.equal(store.getSession(token).user.id, owner.id);
   assert.equal(
-    store.getConnection(owner.id, connection.id).config.token,
+    store.getConnection(owner.id, connection.id).config.password,
     "persistent-private-token",
   );
   assert.equal(store.libraryState(session.profileId).progress[0].seconds, 120);

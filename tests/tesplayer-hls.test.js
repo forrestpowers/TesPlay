@@ -140,7 +140,7 @@ test('watchdog recovery has a deadline after replacing the operation and publish
  assert.equal(player.getSnapshot().phase,'error');assert.deepEqual(events,['NETWORK_TIMEOUT']);assert.equal(player.operation.invocations.size,0);
 });
 
-test('a direct Plex file with an unsupported browser codec requests full compatibility at the saved position',async()=>{
+test('a direct file with an unsupported browser codec requests full compatibility at the saved position',async()=>{
  const player=fixture();player.state.positionSeconds=288;const selected=[];
  player.requestCompatibility=async(mode,reason,seek)=>{selected.push({mode,seek});};
  const videoTrack={getDecoderConfig:async()=>null,getCodecParameterString:async()=>'av01',getCodedWidth:async()=>1280,getCodedHeight:async()=>720};

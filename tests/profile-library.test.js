@@ -16,7 +16,6 @@ const typesUrl = moduleUrl('../src/types.ts');
 const { ProfileLibrary, createLibraryIdentity } = await import(moduleUrl('../src/profile-library.ts', {
   './api': moduleUrl('../src/api.ts'),
   './types': typesUrl,
-  './plex-continuity': moduleUrl('../src/plex-continuity.ts', { './types': typesUrl }),
 }));
 const item = (id, connectionId = 'source') => ({ id, connectionId, type: 'movie', title: id, source: 'Library' });
 const library = (favorites = [], progress = []) => ({ favorites, progress });
@@ -84,36 +83,6 @@ test('the latest library load wins when requests finish out of order', async () 
   assert.deepEqual(f.controller.getSnapshot().value.favorites.map(value => value.id), ['newer']);
 });
 
-test('Plex continuity combines successful connections with local state and reports failed connections', async () => {
-  const localItem = item('local'), plexItem = item('plex', 'plex-good');
-  const localProgress = { item: localItem, seconds: 10, duration: 100, updatedAt: '2026-10-09T12:00:00.000Z' };
-  const plexProgress = { item: plexItem, seconds: 20, duration: 100, updatedAt: '2026-10-10T12:00:00.000Z' };
-  const f = fixture(async path => {
-    if (path === '/library/state') return { ...library([localItem], [localProgress]), queue: [localItem] };
-    if (path.includes('plex-good')) return { progress: [plexProgress], watchlist: [plexItem] };
-    throw new Error('Connection unavailable');
-  }, [{ id: 'plex-good', type: 'plex' }, { id: 'plex-bad', type: 'plex' }]);
-  await f.controller.load();
-  const value = f.controller.getSnapshot().value;
-  assert.deepEqual(value.favorites, [localItem]);
-  assert.deepEqual(value.queue, [localItem]);
-  assert.deepEqual(value.progress, [plexProgress, localProgress]);
-  assert.deepEqual(value.plexWatchlist, [plexItem]);
-  assert.match(value.plexNotes[0], /Plex continuity could not refresh/);
-});
-
-test('a delayed Plex refresh cannot publish into a different account with the same profile ID', async () => {
-  const delayed = deferred();
-  const f = fixture(async path => path === '/library/state' ? library([item('local')]) : delayed.promise, [{ id: 'plex', type: 'plex' }]);
-  const pending = f.controller.load();
-  await Promise.resolve();
-  f.switchIdentity('another-account', 'profile-a');
-  delayed.resolve({ progress: [], watchlist: [item('old-plex')] });
-  await pending;
-  assert.equal(f.controller.getSnapshot().identity, f.identity);
-  assert.equal(f.controller.getSnapshot().value.plexWatchlist, undefined);
-});
-
 test('progress checkpoints stay ordered, continue after a failed save and retain keepalive/profile metadata', async () => {
   const first = deferred(), requests = [];
   const f = fixture(async (path, body, method, signal, keepalive) => {
@@ -139,7 +108,7 @@ test('a profile switch finishes ordered checkpoints for the originating profile 
   const f = fixture(async (path, body, method, signal, keepalive) => {
     if (path === '/library/state') return currentLibrary;
     requests.push({ path, body, keepalive });
-    return requests.length === 1 ? delayed.promise : { plexSyncError: 'Old-profile synchronization note' };
+    return requests.length === 1 ? delayed.promise : { ok: true };
   });
   const first = f.controller.saveProgress(f.identity, item('film'), 10, 100, 'playing');
   const queued = f.controller.saveProgress(f.identity, item('film'), 20, 100, 'paused');

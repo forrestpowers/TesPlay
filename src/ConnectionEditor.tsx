@@ -1,22 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ArrowRight, ArrowUpRight, Check, ChevronLeft, LoaderCircle, RefreshCw, Smartphone } from 'lucide-react';
-import { allServices as services } from './catalog';
+import { ArrowRight, Check, ChevronLeft, LoaderCircle, RefreshCw, Smartphone } from 'lucide-react';
+import { services } from './catalog';
 import { Busy, Modal } from './components';
 import { api, errorMessage } from './api';
 import IptvCategoryPicker from './IptvCategoryPicker';
 import type { IptvCategory, IptvSelection } from './IptvCategoryPicker';
-import QrCode from './QrCode';
 import YouTubeDeviceSignIn from './YouTubeDeviceSignIn';
 import { connectionFields as fieldsFor, youtubeAuthMode } from './connection-fields';
 import type { YouTubeAuthMode } from './connection-fields';
 import type { Connection } from './types';
-import type { PlexPin } from './plex-connection';
 
 export type ConnectionFormOptions = { playlist: string; youtubeMode: YouTubeAuthMode; loadedCategories?:IptvSelection };
 
-export default function ConnectionEditor({ adding, editing, editConfig, configuredFields, preview, busy, error, notice, publicUrl, plexPin, managedGoogle=false,googleConfigured=false,startGoogle,onRefresh,
-  onClose: close, onSignIn, onPhoneSetup, onTypeChange, onSubmit, startPlex, checkPlex }: {
+export default function ConnectionEditor({ adding, editing, editConfig, configuredFields, preview, busy, error, notice, onRefresh,
+  onClose: close, onSignIn, onPhoneSetup, onTypeChange, onSubmit }: {
   adding: string;
   editing: Connection | null;
   editConfig: Record<string, string>;
@@ -25,22 +23,14 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
   busy: boolean;
   error: string;
   notice: string;
-  publicUrl: string;
-  plexPin: PlexPin | null;
-  managedGoogle?:boolean;
-  googleConfigured?:boolean;
-  startGoogle?:()=>Promise<void>;
   onRefresh?:()=>Promise<void>;
   onClose: () => void;
   onSignIn: () => void;
   onPhoneSetup: () => void;
   onTypeChange: (type: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>, options: ConnectionFormOptions) => Promise<void>;
-  startPlex: () => Promise<void>;
-  checkPlex: () => Promise<void>;
 }) {
   const [playlist, setPlaylist] = useState('');
-  const [showPlexAdvanced,setShowPlexAdvanced]=useState(false);
   // YouTube connects only by signing in on this screen; saving an older Data API connection switches it over.
   const [youtubeMode] = useState<YouTubeAuthMode>(() => adding === 'youtube' ? 'innertube' : editing ? youtubeAuthMode(editConfig, configuredFields) : 'apiKey');
   const connectionFields = fieldsFor(adding, youtubeMode);
@@ -131,50 +121,6 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
               <ChevronLeft size={16} /> Use Xtream Codes
             </button>
           )}
-          {!editing && adding === "plex" && (
-            <div className="plex-signin">
-              <p>Connect securely with your Plex account.</p>
-              {plexPin ? (
-                <>
-                  <QrCode
-                    value={plexPin.url}
-                    label="Scan to authorize your Plex account"
-                  />
-                  <p className="form-help">
-                    Scan with your phone, approve on Plex, then check the
-                    connection here.
-                  </p>
-                  <a
-                    className="button primary full"
-                    href={plexPin.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Authorize on Plex <ArrowUpRight size={17} />
-                  </a>
-                  <div className="pair-code">{plexPin.code}</div>
-                  <button
-                    className="button ghost full"
-                    disabled={busy}
-                    onClick={checkPlex}
-                  >
-                    I’ve authorized — check connection
-                  </button>
-                </>
-              ) : (
-                <button
-                  className="button primary full"
-                  disabled={busy}
-                  onClick={startPlex}
-                >
-                  Sign in with Plex <ArrowUpRight size={17} />
-                </button>
-              )}
-              <button className="text-button" type="button" onClick={()=>setShowPlexAdvanced(value=>!value)}>{showPlexAdvanced?'Hide advanced settings':'Use advanced server settings'}</button>
-              {!showPlexAdvanced&&error&&<p className="form-error" role="alert">{error}</p>}
-              {!showPlexAdvanced&&notice&&<p className="form-help" role="status">{notice}</p>}
-            </div>
-          )}
           {youtubeDevice && (
             <p className="form-help">
               Browses YouTube the way the YouTube TV app does: your real Home feed, subscriptions, playlists and watch history. You get a short code to enter at google.com/device on your phone.
@@ -182,26 +128,6 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
             </p>
           )}
           {youtubeDevice && editing && <YouTubeDeviceSignIn connectionId={editing.id} signedIn={!!editing.oauthAuthorized && editing.authMode === 'innertube'} onChanged={async () => { await onRefresh?.(); }} />}
-          {managedGoogle&&adding==='drive'&&<div className="plex-signin"><p>{adding==='drive'?'Connect your Google account to browse your videos.':'Connect your Google account for subscriptions and playlists.'}</p><button className="button primary full" disabled={busy||!googleConfigured} onClick={()=>void startGoogle?.()}>Sign in with Google <ArrowUpRight size={17}/></button>{!googleConfigured&&<p className="form-help">Google sign-in is not configured on this server yet.</p>}{error&&<p className="form-error" role="alert">{error}</p>}</div>}
-          {!managedGoogle&&adding === "drive" && (
-            <p className="form-help">
-              Create a web OAuth client in Google Cloud and enable the Drive
-              API. Add{" "}
-              <code>
-                {publicUrl}/api/{adding}/callback
-              </code>{" "}
-              as a redirect URL. Save here, then authorize your Google
-              account. Authorization is remembered until you revoke access
-              or the provider requires it again.
-            </p>
-          )}
-          {adding === "local" && (
-            <p className="form-help">
-              Mount your SMB share on the server first. For Docker, make it
-              available inside the container at <code>/media</code>. The app
-              can only browse the selected folder.
-            </p>
-          )}
           {!categoryStep && adding === "xtream" && (
             <p className="form-help">
               Add as many IPTV accounts as you like. They share one library.
@@ -214,7 +140,7 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
               keep its current value.
             </p>
           )}
-          {!(managedGoogle&&adding==='drive')&&!(adding==='plex'&&!editing&&!showPlexAdvanced)&&<form ref={formRef} onSubmit={submitForm} key={`${editing?.id || "new"}:${adding}`} onChange={event => {
+          {<form ref={formRef} onSubmit={submitForm} key={`${editing?.id || "new"}:${adding}`} onChange={event => {
             if (newIptv && event.target instanceof HTMLInputElement && event.target.name && event.target.name !== 'name') invalidateCategories();
           }}>
             <div className="connection-details-fields" hidden={categoryStep}>

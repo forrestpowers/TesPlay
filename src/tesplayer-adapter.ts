@@ -24,7 +24,7 @@ async function playlist(raw: string, signal: AbortSignal) {
 }
 
 /** A host-side contract adapter over TesPlay's existing authenticated media URLs. */
-export async function createTesPlayAdapter(playback: Playback, item: MediaItem, signal: AbortSignal, plexCompatibility = false) {
+export async function createTesPlayAdapter(playback: Playback, item: MediaItem, signal: AbortSignal) {
   const ownedMedia = new Set<string>();
   const release = () => {
     for (const path of ownedMedia) void api(path, {}, 'DELETE', undefined, true).catch(() => {});
@@ -34,7 +34,6 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
   const id = crypto.randomUUID();
   const resolutionId = crypto.randomUUID();
   let current: PlaybackSession;
-  let compatible = plexCompatibility;
   let root = playback;
   let selectedAudio = playback.settings?.audioTrackId || playback.selectedAudioTrackId;
   const selectedQuality = playback.settings?.qualityId || 'auto';
@@ -86,7 +85,7 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
       }
       let audioGroup:string|undefined;
       if (variants.length) {
-        if (useDefaults && p.provider !== 'plex' && p.settings?.qualityId === undefined) qualityId = preferredQuality(variants.map(variant => variant.quality), playback.defaults?.qualityId || 'auto');
+        if (useDefaults && p.settings?.qualityId === undefined) qualityId = preferredQuality(variants.map(variant => variant.quality), playback.defaults?.qualityId || 'auto');
         // Auto is a stable policy choice, rather than a bandwidth-based ABR claim.
         const automatic = [...variants].sort((a, b) => (b.quality.height || 0) - (a.quality.height || 0)).find((v) => (v.quality.height || 0) <= 1080) || variants[0];
         const selected = qualityId === 'auto' ? automatic : variants.find((v) => v.id === qualityId);
@@ -122,11 +121,10 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
       tracks = p.audioTracks.map(t=>({id:t.id,kind:'audio' as const,codec:t.codec || 'aac',language:t.language || null,label:t.label,default:t.id===(p.selectedAudioTrackId || audioId),forced:false,selector:{kind:'endpoint' as const,resourceId:audio?'sound':'picture'}}));
       audioId = p.selectedAudioTrackId || audioId;
     } else if (p.type !== 'hls' && kind === 'direct-file') {
-      if(!fileTracks){const catalogue=await discoverAudioTracks(audio || url,audio?'sound':'picture',operationSignal).catch(reason=>{operationSignal.throwIfAborted();if(reason instanceof AccessSessionExpiredError)throw reason;return {tracks:[],representationId:null};});fileTracks=catalogue.tracks.map((track,index)=>({...track,id:p.provider==='plex'?p.audioTracks?.[index]?.id || track.id:track.id,label:p.provider==='plex'?p.audioTracks?.[index]?.label || track.label:track.label}));representationId=catalogue.representationId || undefined;}
+      if(!fileTracks){const catalogue=await discoverAudioTracks(audio || url,audio?'sound':'picture',operationSignal).catch(reason=>{operationSignal.throwIfAborted();if(reason instanceof AccessSessionExpiredError)throw reason;return {tracks:[],representationId:null};});fileTracks=catalogue.tracks;representationId=catalogue.representationId || undefined;}
       tracks = fileTracks;
-      if(p.provider==='plex')audioId=fileTracks.find(track=>track.default)?.id || fileTracks[0]?.id;
     } else if (!tracks.length) tracks = [{id:'default-audio',kind:'audio',codec:'aac',language:null,label:'Default audio',default:true,forced:false,selector:{kind:'endpoint',resourceId:audio?'sound':'picture'}}];
-    if (useDefaults && p.provider !== 'plex' && p.settings?.audioTrackId === undefined) audioId = preferredLanguageTrack(tracks, (playback.defaults || defaultPlayerPreferences).audioLanguage)?.id || audioId;
+    if (useDefaults && p.settings?.audioTrackId === undefined) audioId = preferredLanguageTrack(tracks, (playback.defaults || defaultPlayerPreferences).audioLanguage)?.id || audioId;
     const expiresAt = new Date(Date.now() + 12 * 3600000).toISOString();
     const endpoint = (raw: string, role: 'muxed' | 'video' | 'manifest' | 'audio', resourceId: string) => ({ resourceId, role, accessUrl: raw, route: readableUrl(raw).origin === location.origin ? 'secure-proxy' as const : 'direct' as const, mimeType: role === 'manifest' ? 'application/vnd.apple.mpegurl' : null, rangeSupported: kind !== 'continuous-ts' && kind !== 'growing-fmp4', expiresAt, ...(p.type!=='hls' && fileTracks?.some(t=>t.selector?.kind==='file-track' && t.selector.resourceId===resourceId) ? {representation:'mediabunny-track-number-per-type-v1' as const,representationId} : {}) });
     const picture = endpoint(url, p.type === 'hls' ? 'manifest' : audio ? 'video' : 'muxed', 'picture');
@@ -140,7 +138,7 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
   const checkGeneration = (sessionId: string, generation?: string) => {
     if (sessionId !== current.id || generation !== current.generationId) throw new Error('This playback operation is out of date.');
   };
-  current = await prepare(playback,playback.provider==='plex'?'auto':selectedQuality,signal,selectedAudio,true);
+  current = await prepare(playback,selectedQuality,signal,selectedAudio,true);
   selectedAudio=current.selectedAudioTrackId || undefined;
   const services: PlayerEngineServices = {
     now: () => performance.now(),
@@ -149,29 +147,16 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
       checkGeneration(sessionId, selection.expectedGenerationId);
       const audioId=selection.audioTrackId || current.selectedAudioTrackId || selectedAudio;
       const qualityId=selection.qualityId || current.selectedQualityId || 'auto';
-      let nextRoot=root;
-      let replacement: PlaybackSession;
-      if (root.provider === 'plex' && selection.audioTrackId && item.connectionId) {
-        const p = await api<Playback>(playbackPath(item,{...root.settings,audioTrackId:audioId,compatibility:compatible}),undefined,undefined,operationSignal);
-        p.settings = {...root.settings,audioTrackId:audioId};
-        replacement = await prepare(p,qualityId,operationSignal,audioId);
-        nextRoot = p;
-      } else replacement = await prepare(root,qualityId,operationSignal,audioId);
+      const replacement = await prepare(root,qualityId,operationSignal,audioId);
       operationSignal.throwIfAborted();
       checkGeneration(sessionId, selection.expectedGenerationId);
       selectedAudio=replacement.selectedAudioTrackId || undefined;
-      root=nextRoot;current = replacement;
+      current = replacement;
       return replacement;
     },
-    requestRouteDemotion: async (sessionId, _reason, operationSignal, generation) => {
+    requestRouteDemotion: async (sessionId, _reason, _operationSignal, generation) => {
       checkGeneration(sessionId,generation);
-      if(root.provider!=='plex' || !item.connectionId) throw new Error('This source does not support refreshing its playback route.');
-      const replacement=await api<Playback>(playbackPath(item,{...root.settings,audioTrackId:selectedAudio?.startsWith('plex-audio-')?selectedAudio:root.settings?.audioTrackId,compatibility:compatible}),undefined,undefined,operationSignal);
-      replacement.settings={...root.settings};
-      fileTracks=undefined;representationId=undefined;
-      const session=await prepare(replacement,'auto',operationSignal);
-      operationSignal.throwIfAborted();checkGeneration(sessionId,generation);
-      root=replacement;current=session;return session;
+      throw new Error('This source does not support refreshing its playback route.');
     },
     requestCompatibility: async (sessionId, mode, reason, operationSignal, _seek, generation) => {
       checkGeneration(sessionId, generation);
@@ -194,19 +179,8 @@ export async function createTesPlayAdapter(playback: Playback, item: MediaItem, 
         audioRemuxed = true; root = replacement; current = session;
         return session;
       }
-      if (!item.connectionId || root.provider !== 'plex' || compatible || mode === 'subtitle-extract') {
-        if (mode !== 'subtitle-extract') compatibilityFailure = `${reason}. ${mode === 'audio-only' ? 'Server audio conversion is available for live IPTV channels only.' : 'This source has no compatibility mode; Plex titles can use Plex compatibility mode.'}`;
-        throw new Error(compatibilityFailure || 'This source needs a supported codec. Plex titles can use Plex compatibility mode.');
-      }
-      const replacement = await api<Playback>(playbackPath(item,{...root.settings,audioTrackId:selectedAudio?.startsWith('plex-audio-')?selectedAudio:root.settings?.audioTrackId,compatibility:true}), undefined, undefined, operationSignal);
-      replacement.settings={...root.settings,compatibility:true};
-      const session = await prepare(replacement, 'auto', operationSignal);
-      operationSignal.throwIfAborted();
-      checkGeneration(sessionId, generation);
-      compatible = true;
-      root = replacement;
-      current = session;
-      return session;
+      if (mode !== 'subtitle-extract') compatibilityFailure = `${reason}. ${mode === 'audio-only' ? 'Server audio conversion is available for live IPTV channels only.' : 'This source has no compatibility mode.'}`;
+      throw new Error(compatibilityFailure || 'This source needs a supported codec.');
     },
   };
   return { session: current, services, get compatibilityFailure() { return compatibilityFailure; } };

@@ -14,13 +14,11 @@ const selectionUrl=moduleUrl('../src/playback-selection.ts',{'./api':apiUrl,'./p
 const {playbackPath,resolvePlayback}=await import(selectionUrl);
 const adapterUrl=moduleUrl('../src/tesplayer-adapter.ts',{'./api':apiUrl,'./player-preferences':preferencesUrl,'./playback-selection':selectionUrl,'@canvas-stream-player/contracts':import.meta.resolve('@canvas-stream-player/contracts'),'@canvas-stream-player/player':import.meta.resolve('@canvas-stream-player/player')});
 const {createTesPlayAdapter}=await import(adapterUrl);
-const typesUrl=moduleUrl('../src/types.ts');
-const {mergePlexContinuity}=await import(moduleUrl('../src/plex-continuity.ts',{'./types':typesUrl}));
 
 test('playback settings are encoded independently and direct playback starts with automatic defaults',()=>{
   const item={id:'movie 1',type:'movie',connectionId:'server&1'};
-  const selected=new URL(playbackPath(item,{audioTrackId:'plex-audio-62',qualityId:'720p',compatibility:true,subtitleTrackId:'off'}),'https://tesplay.test');
-  assert.equal(selected.searchParams.get('connectionId'),'server&1');assert.equal(selected.searchParams.get('audioTrackId'),'plex-audio-62');assert.equal(selected.searchParams.get('qualityId'),'720p');assert.equal(selected.searchParams.get('transcode'),'1');
+  const selected=new URL(playbackPath(item,{audioTrackId:'audio-62',qualityId:'720p',subtitleTrackId:'off'}),'https://tesplay.test');
+  assert.equal(selected.searchParams.get('connectionId'),'server&1');assert.equal(selected.searchParams.get('audioTrackId'),'audio-62');assert.equal(selected.searchParams.get('qualityId'),'720p');assert.equal(selected.searchParams.has('transcode'),false);
   assert.equal(new URL(playbackPath(item),'https://tesplay.test').searchParams.has('audioTrackId'),false);
   assert.equal(new URL(playbackPath(item,{audioTrackId:'default'}),'https://tesplay.test').searchParams.has('audioTrackId'),false);
 });
@@ -33,24 +31,6 @@ test('saved defaults match language aliases and available quality while absent t
   assert.deepEqual(defaultPlaybackSettings({audio:[],subtitles:[],qualities:[]},preferences),{audioTrackId:'default',subtitleTrackId:'off',qualityId:'auto'});
   assert.equal(preferredSubtitleTrack(options.subtitles,{...preferences,subtitleLanguage:null}).id,'caption');
   assert.equal(preferredSubtitleTrack(options.subtitles,{...preferences,subtitlesEnabled:false}),undefined);
-});
-
-test('direct Plex playback reads saved defaults and explicit title choices take priority',async t=>{
-  const oldFetch=globalThis.fetch,oldLocation=globalThis.location;
-  globalThis.location={origin:'https://tesplay.test',href:'https://tesplay.test/'};
-  t.after(()=>{globalThis.fetch=oldFetch;if(oldLocation===undefined)delete globalThis.location;else globalThis.location=oldLocation;});
-  const requests=[],preferences={audioLanguage:'nl',subtitleLanguage:'en',subtitlesEnabled:true,qualityId:'720p'};
-  globalThis.fetch=async input=>{
-    const url=new URL(String(input),'https://tesplay.test');requests.push(url);
-    if(url.pathname==='/api/player/preferences')return Response.json(preferences);
-    if(url.pathname==='/api/playback/options')return Response.json({audio:[{id:'plex-audio-61',language:'eng'},{id:'plex-audio-62',language:'nld'}],subtitles:[],qualities:[]});
-    return Response.json({provider:'plex',type:'hls',url:'/api/media/stream'});
-  };
-  const item={id:'movie',connectionId:'server',type:'movie',source:'Plex',providerType:'plex'};
-  const playback=await resolvePlayback(item,{},new AbortController().signal);
-  assert.equal(requests.at(-1).searchParams.get('audioTrackId'),'plex-audio-62');assert.equal(requests.at(-1).searchParams.get('qualityId'),'720p');assert.deepEqual(playback.defaults,preferences);
-  await resolvePlayback(item,{audioTrackId:'default',qualityId:'auto',subtitleTrackId:'off'},new AbortController().signal);
-  assert.equal(requests.at(-1).searchParams.has('audioTrackId'),false);assert.equal(requests.at(-1).searchParams.get('qualityId'),'auto');
 });
 
 test('HLS audio and quality selections preserve each other, subtitles are discovered, and stale requests cannot replace a session',async t=>{
@@ -74,13 +54,6 @@ test('HLS audio and quality selections preserve each other, subtitles are discov
   await assert.rejects(adapter.services.requestSelection(adapter.session.id,{audioTrackId:'hls-audio-nl-Dutch',expectedGenerationId:adapter.session.generationId},lifetime.signal),/out of date/);
   const cancelled=new AbortController();cancelled.abort();await assert.rejects(adapter.services.requestSelection(quality.id,{audioTrackId:'hls-audio-nl-Dutch',expectedGenerationId:quality.generationId},cancelled.signal));
   const stillCurrent=await adapter.services.requestSelection(quality.id,{qualityId:'quality-1',expectedGenerationId:quality.generationId},lifetime.signal);assert.equal(stillCurrent.selectedAudioTrackId,'hls-audio-en-English');
-});
-
-test('Plex continuity merges newer server watch time, preserves unsynced local checkpoints and deduplicates watchlist',()=>{
-  const item={id:'1',connectionId:'plex',source:'Plex',type:'movie',title:'Movie'},other={...item,id:'2'};
-  const local={favorites:[],progress:[{item,seconds:60,duration:120,updatedAt:'2026-10-01T00:00:00Z'},{item:other,seconds:75,duration:120,updatedAt:'2026-10-09T00:00:00Z'}]};
-  const server={progress:[{item,seconds:90,duration:120,updatedAt:'2026-10-08T00:00:00Z'},{item:other,seconds:20,duration:120,updatedAt:'2026-10-01T00:00:00Z'}],watchlist:[item,item]};
-  const result=mergePlexContinuity(local,[server]);assert.equal(result.progress.find(p=>p.item.id==='1').seconds,90);assert.equal(result.progress.find(p=>p.item.id==='2').seconds,75);assert.equal(result.plexWatchlist.length,1);
 });
 
 test('direct files discover actual audio tracks with valid pinned selectors and can switch the second track',async t=>{

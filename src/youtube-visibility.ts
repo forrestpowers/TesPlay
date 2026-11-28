@@ -67,7 +67,6 @@ export function filterLibraryForYouTubeVisibility(library: Library, hide: boolea
     ...library,
     favorites: library.favorites.filter(visible),
     ...(library.queue ? { queue: library.queue.filter(visible) } : {}),
-    ...(library.plexWatchlist ? { plexWatchlist: library.plexWatchlist.filter(visible) } : {}),
     progress: library.progress.filter(entry => visible(entry.item)),
   };
 }

@@ -3,9 +3,6 @@ import https from "node:https";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { randomBytes, createHash } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createAudioRemuxer } from "./audio-remux.js";
 
@@ -237,28 +234,6 @@ export async function remoteData(url, options = {}) {
   }
 }
 
-export async function containedPath(root, relative = "") {
-  if (typeof root !== "string" || !path.isAbsolute(root))
-    throw providerError("Set an absolute local media folder on the server.");
-  if (
-    typeof relative !== "string" ||
-    relative.includes("\0") ||
-    path.isAbsolute(relative)
-  )
-    throw providerError("Invalid media path.");
-  const realRoot = await realpath(root).catch(() => {
-    throw providerError("The media folder is not mounted or is unavailable.");
-  });
-  const resolved = await realpath(path.resolve(realRoot, relative)).catch(
-    () => {
-      throw providerError("Media was not found.", 404);
-    },
-  );
-  if (resolved !== realRoot && !resolved.startsWith(realRoot + path.sep))
-    throw providerError("Media path is outside the configured folder.", 403);
-  return resolved;
-}
-
 export function parseRange(header, size) {
   if (!header) return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(header);
@@ -309,22 +284,6 @@ export function subtitleToVtt(text) {
   );
 }
 
-export const mediaTypes = {
-  ".mp4": "video/mp4",
-  ".m4v": "video/mp4",
-  ".webm": "video/webm",
-  ".mkv": "video/x-matroska",
-  ".mov": "video/quicktime",
-  ".mp3": "audio/mpeg",
-  ".m4a": "audio/mp4",
-  ".aac": "audio/aac",
-  ".flac": "audio/flac",
-  ".ogg": "audio/ogg",
-  ".wav": "audio/wav",
-  ".vtt": "text/vtt",
-  ".srt": "application/x-subrip",
-};
-
 /** The car-mode transcoder, when both its address and a token of at least 24 characters are set. */
 export function carModeTranscoder(url, token, connectHost = "") {
   if (!url || typeof token !== "string" || token.length < 24) return null;
@@ -356,21 +315,6 @@ export function createMediaService(ctx) {
     .set("X-TesPlay-Artwork", "unavailable")
     .type("image/svg+xml")
     .send('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="720" viewBox="0 0 480 720"><rect width="480" height="720" fill="#17202b"/><g transform="translate(192 312)" fill="none" stroke="#64758a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="12" width="88" height="72" rx="10"/><path d="M36 12v72m24-72v72M4 36h32m24 0h32M4 60h32m24 0h32"/></g></svg>');
-  function identity(connection, profileId) {
-    if (connection?.type === 'stremio') return createHash('sha256').update(JSON.stringify([connection.config.authKey || '', (connection.config.addons || []).map(a => [a.key, a.url, a.enabled])])).digest('hex');
-    if (connection?.type !== "plex") return null;
-    return createHash("sha256")
-      .update(
-        JSON.stringify([
-          connection.config.url,
-          connection.config.profileTokens?.[profileId]?.token ||
-            connection.config.token ||
-            "",
-          connection.config.ownerProfileId || "",
-        ]),
-      )
-      .digest("hex");
-  }
   function register(req, connection, resource) {
     const now = Date.now();
     if (resources.size >= 20000)
@@ -385,7 +329,6 @@ export function createMediaService(ctx) {
       userId: req.user.id,
       profileId,
       connectionId: connection?.id,
-      identity: identity(connection, profileId),
       expires: now + 12 * 3600000,
     };
     // Artwork is referenced by saved library items. An authenticated, encrypted
@@ -426,36 +369,7 @@ export function createMediaService(ctx) {
       ? ctx.getConnection(req, item.connectionId)
       : null;
     if(connection && item.access && ctx.assertAccess) ctx.assertAccess(req,connection,item.access);
-    if (item.identity !== identity(connection, ctx.getProfileId(req)))
-      throw providerError(
-        connection?.type === 'stremio' ? 'Your Stremio connection changed. Open the title again.' : "The selected Plex profile changed. Open the title again.",
-        404,
-      );
     return {item, connection};
-  }
-  async function heartbeatHandler(req, res, next) {
-    const controller = new AbortController();
-    res.once('close', () => {if (!res.writableFinished) controller.abort();});
-    try {
-      const {item, connection} = authorizedResource(req);
-      if (connection?.type !== 'plex' || item.kind !== 'hls' || !/^[a-f0-9]{24}$/.test(item.plexSessionId || ''))
-        throw providerError('This media does not have a Plex transcode session.', 400);
-      const url = new URL('/video/:/transcode/universal/ping', connection.config.url);
-      url.searchParams.set('session', item.plexSessionId);
-      item.controllers ??= new Set();
-      item.controllers.add(controller);
-      res.once('close', () => item.controllers.delete(controller));
-      const response = await requestRemote(url.toString(), {
-        headers: item.headers, allowedPrivateHosts: item.allowedPrivateHosts,
-        timeout: 10000, signal: controller.signal,
-      });
-      response.resume();
-      if (response.statusCode < 200 || response.statusCode >= 300)
-        throw providerError('Plex could not keep this stream active.', 502);
-      item.expires = Date.now() + 12 * 3600000;
-      res.setHeader('Cache-Control', 'private, no-store');
-      res.json({ok: true});
-    } catch (error) {next(error);}
   }
   async function handler(req, res, next) {
     const controller = new AbortController();
@@ -493,41 +407,6 @@ export function createMediaService(ctx) {
           return child;
         });
         return res.type("application/vnd.apple.mpegurl").send(rewritten);
-      }
-      if (item.root) {
-        const filename = await containedPath(item.root, item.relative);
-        const info = await stat(filename);
-        if (!info.isFile()) throw providerError("Media file not found.", 404);
-        const range = parseRange(req.headers.range, info.size);
-        res.setHeader('X-Csp-Representation-Id', 'mr1_' + createHash('sha256').update(`tesplay-file-v1\0${req.params.token}\0${info.size}\0${info.mtimeMs}\0${info.ino}`).digest('base64url'));
-        res.setHeader("Accept-Ranges", "bytes");
-        res.setHeader(
-          "Content-Type",
-          mediaTypes[path.extname(filename).toLowerCase()] ||
-            "application/octet-stream",
-        );
-        if (range === false)
-          return res
-            .status(416)
-            .set("Content-Range", `bytes */${info.size}`)
-            .end();
-        if (range)
-          res
-            .status(206)
-            .set(
-              "Content-Range",
-              `bytes ${range.start}-${range.end}/${info.size}`,
-            );
-        res.setHeader(
-          "Content-Length",
-          range ? range.end - range.start + 1 : info.size,
-        );
-        if (req.method === "HEAD") return res.end();
-        const stream = createReadStream(filename, range || {});
-        res.once("close", () => stream.destroy());
-        stream.once("error", () => res.destroy());
-        stream.pipe(res);
-        return;
       }
       const currentHeaders = item.getHeaders
         ? await item.getHeaders(req, connection)
@@ -1019,5 +898,5 @@ export function createMediaService(ctx) {
     if (response.statusCode !== 200) throw providerError("The transcoder could not read this title.", 502);
     return JSON.parse(text);
   }
-  return { register, handler, heartbeatHandler, releaseHandler, probeTitle, carModeAvailable: !!transcoder };
+  return { register, handler, releaseHandler, probeTitle, carModeAvailable: !!transcoder };
 }

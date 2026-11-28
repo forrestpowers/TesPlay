@@ -24,15 +24,13 @@ function timeLabel(seconds: number) {
     : `${minutes}:${String(time % 60).padStart(2, '0')}`;
 }
 
-export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved, isPlex }: {
+export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved }: {
   item: MediaItem;
   onClose: () => void;
   onPlay: (item: MediaItem, settings: PlaybackSettings) => void;
   onFavorite: (item: MediaItem) => void;
   saved: boolean;
-  isPlex: boolean;
 }) {
-  const isStremio = item.providerType === 'stremio';
   const series = item.type === 'series' || item.type === 'episode' || item.type === 'folder' && !!item.seriesId;
   const [episodes, setEpisodes] = useState<MediaItem[]>([]);
   const [episodeLoading, setEpisodeLoading] = useState(series);
@@ -40,7 +38,7 @@ export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved,
   const [discovery, dispatchDiscovery] = useReducer(detailsReducer, item.type === 'series' || item.type === 'folder' ? null : item, createDetailsState);
   const { selected, options, error, profileSettings } = discovery;
   const loading = discovery.status === 'pending';
-  const settings = { ...(isStremio ? {sourceId:'auto'} : {}), ...detailsPlaybackSettings(discovery) };
+  const settings = detailsPlaybackSettings(discovery);
   const editSettings = (patch: PlaybackSettings) => dispatchDiscovery({ type: 'edit', patch });
   const [failedArtwork, setFailedArtwork] = useState('');
   const [failedPoster, setFailedPoster] = useState('');
@@ -70,7 +68,6 @@ export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved,
     return startDetailsDiscovery(async signal => {
       const preferences = api<PlayerPreferences>('/player/preferences',undefined,undefined,signal).catch(() => { signal.throwIfAborted(); return defaultPlayerPreferences; });
       const available = async (): Promise<PlaybackOptions> => {
-        if (isPlex || isStremio) return api<PlaybackOptions>(`/playback/options?${new URLSearchParams({ connectionId: selected.connectionId || '', itemId: selected.id, kind: selected.type })}`, undefined, undefined, signal);
         const [{ resolvePlayback }, { createTesPlayAdapter }] = await Promise.all([import('./playback-selection'), import('./tesplayer-adapter')]);
         signal.throwIfAborted();
         const playback = await resolvePlayback(selected, {}, signal, defaultPlayerPreferences);
@@ -87,7 +84,7 @@ export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved,
       onResult: ({ result, defaults }) => dispatchDiscovery({ type: 'resolved', identity, options: result, preferences: defaults }),
       onError: reason => dispatchDiscovery({ type: 'failed', identity, error: errorMessage(reason) }),
     });
-  }, [selected, discovery.selectionId, isPlex, isStremio, item.unavailable]);
+  }, [selected, discovery.selectionId, item.unavailable]);
 
   function chooseEpisode(episode: MediaItem) {
     if (selected && itemKey(selected) === itemKey(episode)) return;
@@ -159,7 +156,7 @@ export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved,
       <div className="media-details-overview">
         <p ref={descriptionRef} id={descriptionId} className={`media-details-description${descriptionExpanded ? ' expanded' : ''}`}>{descriptionExpanded ? description : descriptionPreview}</p>
         {(descriptionShortened || descriptionClipped || descriptionExpanded) && <button type="button" className="media-details-read-more" aria-expanded={descriptionExpanded} aria-controls={descriptionId} onClick={() => setExpandedDescription(descriptionExpanded ? null : description)}>{descriptionExpanded ? 'Read less' : 'Read more…'}</button>}
-        {item.unavailable && <p className="form-help">This Watchlist title is not available on your Plex server.</p>}
+        {item.unavailable && <p className="form-help">This title is no longer available.</p>}
       </div>
       <section className="media-details-playback" aria-label="Playback settings">
         <div className="media-details-settings-heading"><h3>Playback settings</h3>{!loading && selected && !item.unavailable && <span>{usesDefaults ? 'Your defaults' : 'Custom'}</span>}</div>
@@ -171,7 +168,6 @@ export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved,
           {error && <p className="form-help" role="status">Options could not load: {error} You can still try automatic playback.</p>}
           {options.note && <p className="form-help" role="status">{options.note}</p>}
           <div className="media-details-options">
-            {isStremio && <PlaybackOptionField label="Source" accessibleLabel="Stremio source" icon={<Play size={18}/>} disabled={loading} value={settings.sourceId || 'auto'} choices={[{id:'auto',label:'Automatic source'},...(options.sources || []).filter(source=>!source.unavailable).map(source=>({id:source.id,label:`${source.addon} · ${source.label}${source.description ? ' · '+source.description.slice(0,100) : ''}`}))]} onChange={sourceId=>editSettings({sourceId})}/> }
             <PlaybackOptionField label="Audio" accessibleLabel="Audio track" icon={<Volume2 size={18} aria-hidden="true" />} disabled={loading} value={settings.audioTrackId || 'default'}
               choices={[{ id: 'default', label: 'Source default' }, ...options.audio]} onChange={audioTrackId => editSettings({ audioTrackId })} />
             <PlaybackOptionField label="Subtitles" accessibleLabel="Subtitle track" icon={<Captions size={18} aria-hidden="true" />} disabled={loading} value={settings.subtitleTrackId || 'default'}
@@ -180,10 +176,6 @@ export default function MediaDetails({ item, onClose, onPlay, onFavorite, saved,
               choices={[...(!options.qualities.some(quality => quality.id === 'auto') ? [{ id: 'auto', label: 'Auto / original' }] : []), ...options.qualities]} onChange={qualityId => editSettings({ qualityId })} />
           </div>
           <div className="media-details-checks">
-            {isPlex && <>
-              <label className="media-details-desktop-compatibility"><input type="checkbox" checked={!!settings.compatibility} onChange={event => editSettings({ compatibility: event.target.checked })} />Use Plex compatibility mode</label>
-              <details className="media-details-advanced"><summary>More options</summary><label><input type="checkbox" checked={!!settings.compatibility} onChange={event => editSettings({ compatibility: event.target.checked })} />Use Plex compatibility mode</label></details>
-            </>}
             <label><input type="checkbox" checked={!!settings.startOver} onChange={event => editSettings({ startOver: event.target.checked })} />Start from the beginning</label>
           </div>
         </>}

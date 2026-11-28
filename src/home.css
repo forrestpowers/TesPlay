@@ -49,8 +49,6 @@
 }
 .service-tile:hover { background: var(--surface); border-color: #ffffff26; }
 .service-tile .service-logo { display: grid; place-items: center; flex: none; width: 32px; height: 32px; font-size: 20px; letter-spacing: 0; }
-.service-tile .service-logo.plex { font-size: 19px; letter-spacing: -1px; }
-.service-tile .service-logo.drive { font-size: 28px; }
 .service-tile .youtube-logo { width: 28px; height: 20px; }
 .service-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .service-label { color: var(--text); font-size: 13px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

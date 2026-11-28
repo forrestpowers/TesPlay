@@ -8,6 +8,7 @@ import ChangePassword from './ChangePassword';
 import type {Auth,Connection,Preferences,PlayerPreferences} from './types';
 import {defaultPlayerPreferences,normalizeLanguage,playbackLanguages,playbackQualities} from './player-preferences';
 import './settings-dashboard.css';
+import { isRetiredService } from './catalog';
 const Accounts=lazy(()=>import('./Accounts'));
 type Section='account'|'connections'|'browsers'|'profiles'|'playback'|'content'|'accounts';
 const sections: {id:Section;label:string;description:string}[]=[
@@ -95,9 +96,10 @@ export default function SettingsDashboard({auth,connections,preferences,preferen
     <p id="youtube-shorts-help" className="form-help">Videos up to three minutes long are hidden, including ordinary short uploads. Videos with unknown duration may still appear. Your saved items return when you turn this off.</p>
     {!preferencesReady&&!preferencesBusy&&<button className="button ghost small" onClick={()=>void onReloadPreferences()}>Retry account preferences</button>}
   </article>;
+  const usableConnections=connections.filter(c=>!isRetiredService(c.type));
   const connectionsPanel=<article className="settings-card dashboard-panel"><div className="dashboard-panel-heading"><Cable size={21}/><div><h2>Your connections</h2><p>{canManage?'Your personal connections and libraries shared with you.':'Libraries shared with your account.'}</p></div></div>
-    {connections.map(c=><div className="dashboard-connection" key={c.id}><ConnectorLogo type={c.type}/><div><strong>{c.name}</strong><small>{c.configured?'Connected':'Setup needed'}</small></div><button className="button ghost small" onClick={()=>onBrowse(c)}>Browse</button></div>)}
-    {!connections.length&&<p className="form-help">{canManage?'Connect a library to make this space yours.':'Your server owner can share libraries with you.'}</p>}
+    {usableConnections.map(c=><div className="dashboard-connection" key={c.id}><ConnectorLogo type={c.type}/><div><strong>{c.name}</strong><small>{c.configured?'Connected':'Setup needed'}</small></div><button className="button ghost small" onClick={()=>onBrowse(c)}>Browse</button></div>)}
+    {!usableConnections.length&&<p className="form-help">{canManage?'Connect a library to make this space yours.':'Your server owner can share libraries with you.'}</p>}
   </article>;
   return <section className="page-section settings-dashboard"><div className="page-heading"><div><span className="eyebrow">Settings</span><h1>{currentSection.label}</h1><p>{currentSection.description}</p></div>{section==='account'&&<button className="button ghost small" onClick={()=>void onSignOut().catch(e=>onToast(errorMessage(e)))}><LogOut size={16}/>Sign out</button>}{section==='connections'&&canManage&&<span className="count-pill"><Cable size={16}/>{connections.length} connected</span>}</div>
     <nav className="dashboard-section-nav" aria-label="Settings sections">{sections.filter(item=>item.id!=='accounts'||owner).map(({id,label})=><button type="button" key={id} aria-current={section===id?'page':undefined} onClick={()=>selectSection(id)}>{label}</button>)}</nav>
@@ -105,7 +107,7 @@ export default function SettingsDashboard({auth,connections,preferences,preferen
     {section==='playback'&&playbackPanel}
     {section==='content'&&contentPanel}
     {section==='profiles'&&<article className="settings-card dashboard-panel"><div className="dashboard-panel-heading"><Users size={21}/><div><h2>Your profiles</h2><p>Separate watchlists, history and playback preferences.</p></div></div>{auth.profiles.map(p=><div className="dashboard-profile" key={p.id}><span className="avatar" style={{background:p.color}}>{p.name.slice(0,1).toUpperCase()}</span><div><strong>{p.name}</strong><small>{p.id===auth.activeProfileId?'Selected profile':'Personal list and history'}</small></div>{p.id===auth.activeProfileId?<Check size={19}/>:<button className="button ghost small" disabled={profileBusy} onClick={()=>void onSwitchProfile(p.id)}>Switch</button>}</div>)}<button className="text-button dashboard-history" onClick={onManageProfiles}>Add or remove profiles<ArrowRight size={16}/></button></article>}
-    {section==='accounts'&&owner&&<Suspense fallback={<Busy label="Loading household accounts…"/>}><Accounts connections={connections} onToast={onToast}/></Suspense>}
+    {section==='accounts'&&owner&&<Suspense fallback={<Busy label="Loading household accounts…"/>}><Accounts connections={usableConnections} onToast={onToast}/></Suspense>}
     {section==='connections'&&(canManage?<div className="dashboard-full-connections"><Connections embedded connections={connections} onRefresh={onReloadConnections} onBrowse={onBrowse} initialType={initialConnection} onInitialUsed={onInitialUsed} preview={false} onSignIn={()=>{}}/></div>:connectionsPanel)}
     {section==='browsers'&&<AuthorizedBrowsers onRemovedCurrent={onRemovedCurrent}/>}
     <div className="settings-foot"><span>TesPlay · Your screen. Your stories.</span></div>

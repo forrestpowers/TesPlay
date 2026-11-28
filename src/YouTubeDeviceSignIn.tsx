@@ -53,7 +53,7 @@ export default function YouTubeDeviceSignIn({ connectionId, signedIn, onChanged 
   const start = () => run(async () => { setState(await api<DeviceSignInStatus>(`/youtube/${encodeURIComponent(connectionId)}/signin/start`, {})); });
   const signOut = () => run(async () => { await api(`/youtube/${encodeURIComponent(connectionId)}/signout`, {}); setState({ status: 'none' }); await onChanged(); });
   return (
-    <div className="plex-signin youtube-device-signin" aria-live="polite">
+    <div className="signin-panel youtube-device-signin" aria-live="polite">
       {state.status === 'authorized' ? (
         <>
           <p className="youtube-device-done"><Check size={18} /> Signed in with Google. Your Home feed, subscriptions and history are available in YouTube.</p>

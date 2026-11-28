@@ -11,7 +11,7 @@ npm run build
 docker build -t tesplay:check .
 ```
 
-Tests verify player provenance and rebuild the bundled packages before running. Coverage includes account/profile isolation, connection permissions, encrypted persistence, catalog caching, IPTV categories, source selection, media transport, cancellation, Plex continuity, phone pairing/uploads and playback state.
+Tests verify player provenance and rebuild the bundled packages before running. Coverage includes account/profile isolation, connection permissions, encrypted persistence, catalog caching, IPTV categories, source selection, media transport, cancellation, phone pairing and playback state.
 
 The GitHub Actions workflow runs the dependency audit, tests, production build and Docker packaging checks. These checks use controlled fixtures and do not certify every provider or device.
 

@@ -7,8 +7,8 @@ import PlaybackDefaultsFields from './PlaybackDefaultsFields';
 import { defaultPlayerPreferences } from './player-preferences';
 type Account={id:string;name:string;email:string|null;username:string;role:'owner'|'member';disabled:boolean;grants:Grant[]};
 const kindsFor=(c:Connection)=>c.type==='xtream'&&!c.onDemand?['live']:kinds[c.type];
-const kinds:Record<string,string[]>={stremio:['movie','series'],plex:['movie','series','audio'],xtream:['movie','series','live'],m3u:['live'],youtube:['video'],drive:['video','audio'],local:['video','audio']};
-const labels:Record<string,string>={movie:'Movies',series:'TV shows',live:'Live TV',video:'Videos',audio:'Music & audio'};
+const kinds:Record<string,string[]>={xtream:['movie','series','live'],m3u:['live'],youtube:['video']};
+const labels:Record<string,string>={movie:'Movies',series:'TV shows',live:'Live TV',video:'Videos'};
 export default function Accounts({connections,onToast}:{connections:Connection[];onToast:(s:string)=>void}) {
   const [accounts,setAccounts]=useState<Account[]>([]),[busy,setBusy]=useState(true),[error,setError]=useState('');
   const [playbackDefaults,setPlaybackDefaults]=useState(defaultPlayerPreferences);
@@ -20,9 +20,8 @@ export default function Accounts({connections,onToast}:{connections:Connection[]
   useEffect(()=>{
     if(!editing)return;
     const controller=new AbortController();
-    for(const c of connections.filter(c=>['plex','xtream','m3u'].includes(c.type))) {
-      const path=c.type==='plex'?`/plex/${c.id}/sections`:`/catalog?connectionId=${c.id}&kind=all&limit=1`;
-      void api<{sections?:{id:string;title:string}[];categories?:{id:string;name:string}[]}>(path,undefined,undefined,controller.signal).then(r=>{if(!controller.signal.aborted)setOptions(o=>({...o,[c.id]:r.sections?.map(s=>({id:s.id,name:s.title}))||r.categories||[]}));}).catch(()=>{});
+    for(const c of connections.filter(c=>['xtream','m3u'].includes(c.type))) {
+      void api<{categories?:{id:string;name:string}[]}>(`/catalog?connectionId=${c.id}&kind=all&limit=1`,undefined,undefined,controller.signal).then(r=>{if(!controller.signal.aborted)setOptions(o=>({...o,[c.id]:r.categories||[]}));}).catch(()=>{});
     }
     return()=>controller.abort();
   },[editing,connections]);
@@ -72,10 +71,10 @@ export default function Accounts({connections,onToast}:{connections:Connection[]
         <label>{editing==='new'?'Password':'Reset password'}<input type="password" required={editing==='new'} minLength={12} maxLength={256} value={password} onChange={e=>setPassword(e.target.value)} autoComplete="new-password" placeholder={editing==='new'?'At least 12 characters':'Leave blank to keep the current password'}/></label>
         {editing!=='new'&&<p className="form-help">Setting a new password signs this account out on all devices.</p>}
         {editing==='new'&&<PlaybackDefaultsFields value={playbackDefaults} onChange={setPlaybackDefaults} disabled={saving}/>}
-        <fieldset className="grant-list"><legend>Shared connections</legend>{connections.map(c=>{const grant=grants.find(g=>g.connectionId===c.id),field=c.type==='plex'?'sections':'categories';return <div className={`connection-grant ${grant?'selected':''}`} key={c.id}>
+        <fieldset className="grant-list"><legend>Shared connections</legend>{connections.map(c=>{const grant=grants.find(g=>g.connectionId===c.id),field='categories';return <div className={`connection-grant ${grant?'selected':''}`} key={c.id}>
           <div className="connection-grant-row"><button type="button" className="connector-choice" aria-pressed={!!grant} aria-label={`Share ${c.name}`} onClick={()=>toggle(c)}><ConnectorLogo type={c.type}/><span><strong>{c.type==='youtube'?'YouTube':c.name}</strong><small>{grant?'Shared with this account':'Not shared'}</small></span></button><button type="button" className="grant-permissions" disabled={!grant} aria-expanded={expanded===c.id} onClick={()=>setExpanded(expanded===c.id?null:c.id)}>Permissions <ChevronDown size={15}/></button></div>
           {grant&&expanded===c.id&&<div className="grant-details"><div className="grant-kinds">{(kindsFor(c)||[]).map(k=><label className="check-label" key={k}><input type="checkbox" checked={grant.kinds.includes(k)} onChange={e=>update(c.id,{kinds:e.target.checked?[...grant.kinds,k]:grant.kinds.filter(x=>x!==k)})}/>{labels[k]}</label>)}</div>
-            {['plex','xtream','m3u'].includes(c.type)&&<><label className="check-label"><input type="checkbox" checked={grant[field]===null} onChange={e=>update(c.id,{[field]:e.target.checked?null:[]})}/>All {c.type==='plex'?'Plex libraries':'categories'}</label>{grant[field]!==null&&<div className="grant-options">{options[c.id]?.length?options[c.id].map(o=><label className="check-label" key={o.id}><input type="checkbox" checked={grant[field]?.includes(o.id)||false} onChange={e=>update(c.id,{[field]:e.target.checked?[...(grant[field]||[]),o.id]:(grant[field]||[]).filter(x=>x!==o.id)})}/>{o.name}</label>):<p className="form-help">Library choices are unavailable. Retry after checking the connection.</p>}</div>}</>}
+            {['xtream','m3u'].includes(c.type)&&<><label className="check-label"><input type="checkbox" checked={grant[field]===null} onChange={e=>update(c.id,{[field]:e.target.checked?null:[]})}/>All categories</label>{grant[field]!==null&&<div className="grant-options">{options[c.id]?.length?options[c.id].map(o=><label className="check-label" key={o.id}><input type="checkbox" checked={grant[field]?.includes(o.id)||false} onChange={e=>update(c.id,{[field]:e.target.checked?[...(grant[field]||[]),o.id]:(grant[field]||[]).filter(x=>x!==o.id)})}/>{o.name}</label>):<p className="form-help">Library choices are unavailable. Retry after checking the connection.</p>}</div>}</>}
           </div>}
         </div>;})}</fieldset>
         {error&&<div className="form-error" role="alert">{error}</div>}
