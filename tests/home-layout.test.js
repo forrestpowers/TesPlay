@@ -41,10 +41,11 @@ test('saving keeps sections that are absent right now where they were', () => {
   assert.deepEqual(layout.persistHomeOrder(undefined, ['a', 'b']), ['a', 'b']);
 });
 
-test('Google Drive is not offered for new connections', async () => {
+test('only IPTV and YouTube are offered; retired connection types keep a name so they can be removed', async () => {
   const catalog = await load('../src/catalog.ts');
   assert.deepEqual(catalog.services.map((s) => s.id), ['xtream', 'youtube']);
-  assert.ok(catalog.allServices.some((s) => s.id === 'drive'), 'an existing Drive connection keeps its name and icon');
+  for (const type of ['plex', 'stremio', 'drive', 'local']) assert.ok(catalog.isRetiredService(type) && catalog.retiredServices[type], type);
+  assert.equal(catalog.isRetiredService('xtream'), false);
 });
 
 test('the home arrangement is saved with the account, validated and can be reset', async (t) => {

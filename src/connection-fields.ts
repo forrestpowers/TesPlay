@@ -32,20 +32,8 @@ const fields: Record<
       optional: true,
     },
   ],
-  plex: [
-    {
-      key: "url",
-      label: "Plex server URL",
-      placeholder: "http://192.168.1.10:32400",
-    },
-    {
-      key: "token",
-      label: "Plex token",
-      placeholder: "Your server access token",
-      secret: true,
-    },
-  ],
-  drive: [
+  // The legacy YouTube Data API connection signed in with the server owner's Google OAuth client.
+  googleClient: [
     {
       key: "clientId",
       label: "Google OAuth client ID",
@@ -56,19 +44,6 @@ const fields: Record<
       label: "Google OAuth client secret",
       placeholder: "Your client secret",
       secret: true,
-    },
-    {
-      key: "folderId",
-      label: "Start folder ID (optional)",
-      placeholder: "Leave blank for My Drive",
-      optional: true,
-    },
-  ],
-  local: [
-    {
-      key: "rootPath",
-      label: "Folder on the server",
-      placeholder: "/media or /Volumes/MyShare/Movies",
     },
   ],
   youtube: [
@@ -84,7 +59,7 @@ export function connectionFields(type: string, mode: YouTubeAuthMode) {
   // Phone sign-in needs nothing typed but the connection name.
   if (type === 'youtube' && mode === 'innertube') return [];
   return type === 'youtube' && mode === 'oauth'
-    ? fields.drive.filter(field => field.key !== 'folderId')
+    ? fields.googleClient
     : fields[type] || [];
 }
 

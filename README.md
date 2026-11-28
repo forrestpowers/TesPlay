@@ -35,24 +35,20 @@
 | **Pick up where you left off**<br>Profiles, My list, history, saved progress and automatic next-episode playback. | **Send it to the screen**<br>Send a direct video/HLS link or a temporary phone upload. Convert supported uploads with FFmpeg. |
 | **Playback that fits the source**<br>TesPlayer supports compatible files, HLS, MPEG-TS and audio, with available track and quality choices. | **A space for your household**<br>Owner-managed accounts, library permissions, encrypted credentials and revocable browser access. |
 
-Connect **Plex · Xtream Codes · M3U · Google Drive · Stremio addons · YouTube · Radio**. You supply your own media, accounts and any required service access.
+Connect **Xtream Codes · M3U · YouTube**. You supply your own accounts and any required service access.
 
 <details>
 <summary><strong>Explore integrations, playback support and limits</strong></summary>
 
 | Source | Supported capabilities | What you bring |
 | --- | --- | --- |
-| Plex | Libraries, collections, Plex Home selection, Watchlist, progress sync and compatible playback/transcoding | A reachable Plex server and authorized account |
 | Xtream Codes IPTV | Live TV, short EPG and selectable categories (movies and series are off by default because most are H.265; `IPTV_ON_DEMAND=1` turns them on, and with the GPU transcoder configured H.265 titles are converted to H.264) | Your legally authorized provider URL and credentials |
 | M3U IPTV | Playlist import and grouped channels | Your own authorized playlist; XMLTV guide import is not implemented |
-| Google Drive | OAuth, folder browsing and streaming supported media | Your Google OAuth web client and enabled Drive API |
-| Stremio addons | Account/QR linking or configured addon links, catalogs, search, episodes and direct HTTP(S)/HLS sources | Authorized addons and any access they require; raw torrents and DRM sources are unsupported |
 | YouTube | Home feed, subscriptions, watch history, search, channels, playlists and TesPlayer playback (720p30 by default) | A Google account, signed in with a code on your phone (no Google Cloud setup); optional yt-dlp resolver as playback fallback |
-| Radio | Station search, favorites and audio playback | A reachable, compatible station stream |
 
-Service availability, codecs, provider quotas and simultaneous-stream limits still apply. Native Crunchyroll, Jellyfin/Emby adapters, DRM playback and general screen mirroring are not implemented. Existing server-folder, Plex and Stremio connections remain supported, but Local/SMB, Plex and Stremio are not offered as new connections in the UI for now, and Crunchyroll is no longer listed.
+Service availability, codecs, provider quotas and simultaneous-stream limits still apply. Native Crunchyroll, Jellyfin/Emby adapters, DRM playback and general screen mirroring are not implemented. Plex, Stremio, Google Drive and server-folder connections have been removed; a connection of one of those types saved earlier still lists in Settings so it can be removed, but no longer browses or plays.
 
-TesPlayer uses WebCodecs, canvas and Web Audio. Plex can provide compatibility transcoding. Recognized Tesla rear-screen browser/display combinations open a remote-first interface; support depends on vehicle firmware and browser capabilities.
+TesPlayer uses WebCodecs, canvas and Web Audio. Recognized Tesla rear-screen browser/display combinations open a remote-first interface; support depends on vehicle firmware and browser capabilities.
 
 Run on Node.js with SQLite or use Docker Compose on a Mac, Linux host or 64-bit Raspberry Pi. The player source is bundled, so there is no second repository to clone. The maintainer has tested six Intel/AMD Tesla configurations; see [tested vehicles](docs/compatibility.md). Raspberry Pi hardware has not been verified.
 
@@ -102,7 +98,7 @@ docker compose logs app
 <details>
 <summary><strong>Storage and Docker defaults</strong></summary>
 
-SQLite and the encryption key persist in the `aperture-data` Docker volume. The `./media` folder is mounted read-only at `/media`. Docker includes FFmpeg/FFprobe for temporary phone-video conversion and for converting the audio of live channels that carry only AC-3. Keep the host running while you use TesPlay.
+SQLite and the encryption key persist in the `aperture-data` Docker volume. Docker includes FFmpeg/FFprobe for converting the audio of live channels that carry only AC-3. Keep the host running while you use TesPlay.
 
 </details>
 
@@ -252,8 +248,6 @@ docker compose --profile youtube --profile pot up -d --build
 ```
 
 The provider (`brainicism/bgutil-ytdlp-pot-provider`) stays on the internal Compose network and needs no configuration. Where even that is refused (Oracle Cloud, for one), a signed-in connection plays anyway: its player request as the TV app (at the older TV version that still returns plain stream URLs) gets H.264 and AAC URLs the server streams by byte range. Should that stop, the signed-in connection falls back to YouTube's own adaptive protocol (SABR): the server spools the tracks and serves them by byte range, with seeking and the full duration; see [deployment notes](docs/deployment.md#youtube-sabr-playback-signed-in-any-address).
-
-Google Drive requires your own Google web client, the Drive API and the exact redirect URI `https://media.example.com/api/drive/callback`. Configure clients through Connections or the installation-level `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. See [Google OAuth setup](docs/deployment.md#google-drive-oauth).
 
 </details>
 

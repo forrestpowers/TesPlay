@@ -120,8 +120,6 @@
 .remote-paired .cinema-volume { width: 100%; min-height: 44px; margin: 0; gap: 8px; grid-area: auto; }
 .remote-paired .cinema-volume button { min-width: 44px; min-height: 44px; }
 .remote-paired .cinema-volume output { min-width: 32px; font-size: 11px; }
-.remote-paired .cinema-video-sources { margin: 0; padding: 4px 0 0; gap: 8px; border-top: 1px solid var(--line); }
-.remote-paired .cinema-video-sources button { min-width: 44px; min-height: 44px; font-size: 11px; border: 0; background: transparent; white-space: nowrap; }
 .remote-paired .cinema-help { position: static; display: block; max-width: none; margin: 0; padding: 0; background: transparent; font-size: 12px; line-height: 1.45; overflow: visible; }
 .remote-paired .cinema-episodes { min-width: 0; flex: none; }
 .remote-paired .cinema-error { z-index: 60; bottom: calc(var(--remote-footer) + 10px); left: 12px; right: 12px; max-height: 35dvh; overflow: auto; }
@@ -183,9 +181,6 @@
   .remote-paired .cinema-progress { grid-column: 2; grid-row: 1; }
   .remote-paired .cinema-transport { grid-column: 2; grid-row: 2; gap: 0; }
   .remote-paired .cinema-volume { grid-column: 2; grid-row: 3; }
-  .remote-paired .cinema-video-sources { grid-column: 1; grid-row: 3; gap: 4px; padding: 0; }
-  .remote-paired .cinema-video-sources button { padding: 0 2px; }
-  .remote-paired .cinema-video-sources svg { display: none; }
   .remote-paired .cinema-help, .remote-paired .cinema-episodes, .remote-paired .cinema-controls > .busy { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) {

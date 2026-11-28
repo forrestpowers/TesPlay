@@ -1,5 +1,5 @@
-/** Every provider TesPlay can name, including ones no longer offered for new connections. */
-export const allServices = [
+/** The providers TesPlay connects to. */
+export const services = [
   {
     id: "xtream",
     name: "IPTV",
@@ -7,15 +7,6 @@ export const allServices = [
     color: "#9c88ff",
     letters: "TV",
     description: "Connect your Xtream Codes provider or an M3U playlist.",
-  },
-  {
-    id: "plex",
-    name: "Plex",
-    subtitle: "Your personal collection",
-    color: "#e8b341",
-    letters: "plex",
-    description:
-      "Sign in with Plex, choose your server, then choose your Plex Home profile.",
   },
   {
     id: "youtube",
@@ -26,24 +17,16 @@ export const allServices = [
     description:
       "Sign in with your phone for your Home feed, subscriptions, playlists and history.",
   },
-  {
-    id: "drive",
-    name: "Google Drive",
-    subtitle: "Your cloud, on the big screen",
-    color: "#5fba89",
-    letters: "△",
-    description: "Connect your Google account to browse your video files.",
-  },
-  {
-    id: "stremio",
-    name: "Stremio",
-    subtitle: "Your addons, on the big screen",
-    color: "#a88bfa",
-    letters: "S",
-    description:
-      "Connect your Stremio account, choose your addons and watch here with TesPlayer.",
-  },
 ];
 
-/** Providers offered for new connections. Plex, Stremio and Google Drive are not offered for now; existing connections keep working. */
-export const services = allServices.filter((service) => !["plex", "stremio", "drive"].includes(service.id));
+/**
+ * Connection types TesPlay no longer supports. A saved connection of one of
+ * these types still lists in Settings, under its old name, so it can be removed.
+ */
+export const retiredServices: Record<string, string> = {
+  plex: "Plex",
+  stremio: "Stremio",
+  drive: "Google Drive",
+  local: "Server folder",
+};
+export const isRetiredService = (type: string) => Object.hasOwn(retiredServices, type);

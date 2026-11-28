@@ -411,7 +411,7 @@ test("saved episode metadata remains available for continuing a series", () => {
   const episode = {
     id: "episode-4",
     title: "Episode four",
-    source: "Plex",
+    source: "IPTV",
     type: "episode",
     seriesId: "series-1",
     seasonNumber: 0,
@@ -428,7 +428,7 @@ test("editing a Google OAuth client clears its tokens while blank secrets and in
   const f = await fixture(t);
   const client = f.client();
   const auth = await client.request("/api/auth/setup", ownerDetails);
-  for (const type of ["drive", "youtube"]) {
+  for (const type of ["youtube"]) {
     const created = await client.request("/api/connections", {
       type,
       name: type,

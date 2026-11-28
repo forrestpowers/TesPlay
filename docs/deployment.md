@@ -1,6 +1,6 @@
 # Deployment and connection setup
 
-The app runs on your hardware. Your Mac/Pi needs access to Plex, IPTV, Drive and any mounted share; the Tesla needs access to the app's public HTTPS address. TesPlay supplies its own owner login and encrypted credentials; an optional access gateway can add another login layer.
+The app runs on your hardware. Your server needs access to your IPTV provider and YouTube; the Tesla needs access to the app's public HTTPS address. TesPlay supplies its own owner login and encrypted credentials; an optional access gateway can add another login layer.
 
 ## First installation
 
@@ -8,7 +8,7 @@ Start with the [Docker or native quick start](../README.md#quick-start). Copy `.
 
 The default local address is `http://127.0.0.1:4174`. For phone and Tesla access, configure your own reachable HTTPS origin and set `PUBLIC_URL` to it. `media.example.com` throughout this guide is a placeholder for your hostname.
 
-Compose mounts application data at `/app/data` in a persistent volume and mounts the host folder selected by `MEDIA_DIR` read-only at `/media`. Keep your database, encryption key, environment file and tunnel credentials outside source control.
+Compose mounts application data at `/app/data` in a persistent volume. Keep your database, encryption key, environment file and tunnel credentials outside source control.
 
 Cloudflare Tunnel and Access are optional. Use your chosen HTTPS reverse proxy or tunnel; if you enable an additional access layer, both the phone and the vehicle browser must complete it.
 
@@ -24,7 +24,6 @@ Cloudflare Tunnel and Access are optional. Use your chosen HTTPS reverse proxy o
 | `ENCRYPTION_KEY`          | Optional 64-hex-character key. Omit to use the generated binary `encryption.key` file. Changing it without migrating data makes saved credentials unreadable. |
 | `SERVER_NAME`             | Display name returned by server settings.                                                                                                                     |
 | `REMOTE_ENABLED`          | Set `false` to disable phone pairing.                                                                                                                         |
-| `MEDIA_DIR`               | Compose-only host media directory; must exist. It is mounted read-only at `/media`.                                                                           |
 | `APP_HOST_PORT`           | Compose loopback port, default `4174`. Use a different port when a development server already occupies it. The app still listens on `4174` inside Docker. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Optional Compose connector token, stored only in your private `.env`. Do not paste it into screenshots or issue reports.                                      |
 
@@ -81,30 +80,6 @@ Visit the HTTPS hostname, complete any configured access-gateway login, and then
 
 Keep API responses, playlists, protected artwork and media paths out of any custom public cache rules. When troubleshooting, determine whether an error page came from Access, the app or the upstream provider before changing anything. Do not disable Access to fix an OAuth or playback issue.
 
-## Google Drive OAuth
-
-Drive needs an OAuth **Web application** client that belongs to your Google Cloud project. Enable the Drive API, configure the consent screen/audience for your account, and add your account as a test user when the consent app is in testing.
-
-Set this exact authorized redirect URI for public use:
-
-```text
-https://media.example.com/api/drive/callback
-```
-
-For local-only testing, use the exact local `PUBLIC_URL` plus `/api/drive/callback` instead; it is a separate authorized redirect URI. The origin used to start authorization must match the origin of the callback so the owner session can be checked.
-
-In TesPlay, add Drive with `clientId`, `clientSecret` and optional `folderId`, then choose its Google authorization action. Accept the read-only Drive consent on Google's own page. Tokens and the client secret are saved encrypted on the host. This uses `drive.readonly`, which can read the account's Drive files; a folder ID narrows the app's browsing, not the scope of Google's grant. Google's scope classification and applicable verification/audience limits still apply. See [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth) and [web-server OAuth setup](https://developers.google.com/identity/protocols/oauth2/web-server).
-
-Authorize from a browser that has completed TesPlay sign-in and any configured access-gateway login. The callback is a browser redirect, not a Google server webhook, so the existing Access layer can remain in place. If consent is revoked or a refresh token expires, reconnect using the same setup. Docs and Google-native files are not converted into playable video.
-
-## Plex and network files
-
-Plex authorization uses a PIN approved on Plex's site. After approval, pick a discovered server address that **the TesPlay host** can reach. A local LAN address is suitable even when the Tesla is on cellular, since TesPlay relays playback. A cloud metadata address or loopback URL is intentionally rejected. Do not disable TLS validation for a server with a bad certificate; use its correct address/certificate.
-
-Choose the Plex Home profile separately from the TesPlay household profile. A protected Plex profile requires its PIN. Profile-specific Plex tokens are associated with the selected TesPlay profile. Real Plex account/server testing remains necessary, including managed users and any Plex-side transcoding requirements.
-
-For SMB, mount the share with the host operating system. Add its local mount point to TesPlay, or configure `MEDIA_DIR` so Docker exposes that folder at `/media`. The server must be able to list/read it, and the mount must survive host restarts. No SMB username/password is requested by the app. Missing mounts can look like empty libraries; check the OS mount before changing app credentials.
-
 ## Reset a forgotten password
 
 Household members' passwords are reset by the owner in **Settings → Household accounts**. To reset any account's password from the server, including the owner's, run the reset script where TesPlay's data lives:
@@ -155,10 +130,7 @@ Use your own authorized accounts to check a new installation. See the [maintaine
 
 - Restart the app and confirm the owner, connections, lists and progress survive.
 - Through the protected HTTPS address, verify Access then TesPlay login on the phone and the parked Tesla.
-- Play a known browser-compatible local file; seek forward and resume after reopening it.
 - Play one Xtream live channel, one VOD film and one series episode; inspect EPG where the provider supplies it.
-- Approve Plex, choose the correct server, test an ordinary and a protected Home profile, and verify their libraries differ as expected.
-- Authorize Drive, browse the configured folder and play an owned compatible media file.
 - Pair the phone under the same owner account; test play/pause, seeking and volume.
 - Test the intended MCU/browser and cellular connection. A 2026 Model 3 result does not certify older MCU1/MCU2 cars or a different firmware version.
 
@@ -166,7 +138,7 @@ Use the browser's normal fullscreen controls while parked. Firmware determines h
 
 ## YouTube OAuth and phone QR setup
 
-YouTube supports a saved Data API key or an OAuth web client with the YouTube Data API enabled. Register `https://media.example.com/api/youtube/callback` alongside the separate Drive callback when using the same Google Cloud project. Save the client ID and secret in TesPlay account settings, select Google OAuth and authorize on your phone. Offline tokens are encrypted and refreshed server-side. Google may still require fresh consent after revocation, token expiry, client changes or OAuth testing-mode limits. See [Google’s YouTube OAuth guide](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps).
+YouTube supports a saved Data API key or an OAuth web client with the YouTube Data API enabled. Register `https://media.example.com/api/youtube/callback` as its redirect URI. Save the client ID and secret in TesPlay account settings, select Google OAuth and authorize on your phone. Offline tokens are encrypted and refreshed server-side. Google may still require fresh consent after revocation, token expiry, client changes or OAuth testing-mode limits. See [Google’s YouTube OAuth guide](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps).
 
 Open YouTube from the main navigation for subscriptions, channel uploads, playlists, search and profile-specific watch history. Edit your existing YouTube connection and choose Google OAuth to unlock account subscriptions and private playlists; a Data API key can only browse public content. Both channel and subscription lists have pagination. The suggestions feed draws from subscriptions, includes only starred subscriptions and orders uploads newest first. Google's Data API does not expose account watch history or the YouTube Home feed; the history displayed here records watches inside TesPlay. See [subscriptions authorization](https://developers.google.com/youtube/v3/docs/subscriptions/list) and [YouTube API changes](https://developers.google.com/youtube/v3/revision_history). For the real Home feed and account history use the InnerTube mode below.
 
@@ -223,7 +195,7 @@ With both set, live Xtream channels and M3U channels with continuous `.ts` addre
 
 ## IPTV movies and series
 
-Most IPTV providers deliver their movies and series as H.265 (HEVC), which the Tesla browser cannot decode without transcoding, so TesPlay offers IPTV live channels only. Movies and series are left out of category setup, Home, the IPTV library and household sharing, and the Series and Movies tabs appear only when another connected library (Google Drive, or an existing Plex or Stremio connection) can fill them. Set `IPTV_ON_DEMAND=1` to offer IPTV movies and series again.
+Most IPTV providers deliver their movies and series as H.265 (HEVC), which the Tesla browser cannot decode without transcoding, so TesPlay offers IPTV live channels only. Movies and series are left out of category setup, Home, the IPTV library and household sharing, and the Series and Movies tabs are hidden. Set `IPTV_ON_DEMAND=1` to offer IPTV movies and series again.
 
 With the transcoder from the car-mode section configured (`TRANSCODER_URL` and `TRANSCODER_TOKEN`), `IPTV_ON_DEMAND=1` makes those titles playable. When a movie or episode is opened, the transcoder reads the start of the file (`/probe`); titles with H.264 video and browser-friendly audio play directly as before, and the rest (H.265, AC-3, E-AC-3, DTS and similar) are converted to H.264 with stereo AAC at up to 1080p, keeping the film's frame rate (50/60 fps sources become 30). Car mode applies to Xtream movies and episodes too: with car mode at 720p or 480p (the account default or the player's choice for that title), every title is converted to that size, H.264 included; switching it in the player carries on from the current position. The player shows the title's full length; seeking, the ±10 second buttons, the phone remote and resuming restart the conversion at the new position, which takes a second or two. The transcoder reads files by byte range through a loopback relay that applies its address checks to every provider request, and only ordinary video containers are accepted. Converted titles use the first audio track, and subtitles inside the file are not carried over.
 

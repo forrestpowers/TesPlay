@@ -27,7 +27,7 @@ test('the YouTube duration heuristic hides only known positive lengths up to and
 });
 
 test('short non-YouTube videos and live/audio media stay visible, including when marked as reels', () => {
-  for (const providerType of ['plex', 'local', 'drive', 'xtream']) {
+  for (const providerType of ['xtream', 'm3u']) {
     assert.equal(youtubeItemVisible(video('other', 20, { providerType, source: providerType, connectionId: providerType, contentKind: 'shorts' }), true, [connection]), true, providerType);
   }
   for (const type of ['live', 'audio', 'movie', 'episode', 'folder', 'series']) {
@@ -63,10 +63,10 @@ test('visible library projections use measured history duration without changing
     { item: long, seconds: 20, duration: 60, updatedAt: '2026-10-10' },
     { item: local, seconds: 20, duration: 30, updatedAt: '2026-10-10' },
   ];
-  const original = { favorites: [short, long, local], queue: [short, unknown, long], plexWatchlist: [local], progress, stars: [] };
+  const original = { favorites: [short, long, local], queue: [short, unknown, long], progress, stars: [] };
   const before = structuredClone(original);
   Object.freeze(original);
-  for (const values of [original.favorites, original.queue, original.plexWatchlist, original.progress]) Object.freeze(values);
+  for (const values of [original.favorites, original.queue, original.progress]) Object.freeze(values);
   const visible = filterLibraryForYouTubeVisibility(original, true, [connection]);
   assert.deepEqual(visible.favorites.map(item => item.id), ['long', 'local']);
   assert.deepEqual(visible.queue.map(item => item.id), ['long']);

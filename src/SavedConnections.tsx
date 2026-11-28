@@ -1,25 +1,36 @@
-import { ArrowUpRight, ListFilter, Pencil, Server, Trash2, Users } from 'lucide-react';
-import { allServices } from './catalog';
+import { ArrowUpRight, ListFilter, Pencil, Trash2 } from 'lucide-react';
+import { isRetiredService, retiredServices, services } from './catalog';
 import { YouTubeLogo } from './components';
 import type { Connection } from './types';
 
-export default function SavedConnections({ connections, busy, onTest, onEdit, onCategories, onPlexOptions, onBrowse, onDelete }: {
+export default function SavedConnections({ connections, busy, onTest, onEdit, onCategories, onBrowse, onDelete }: {
   connections: Connection[];
   busy: boolean;
   onTest: (connection: Connection) => Promise<void>;
   onEdit: (connection: Connection) => Promise<void>;
   onCategories: (connection: Connection) => void;
-  onPlexOptions: (connection: Connection, mode: 'servers' | 'profiles') => Promise<void>;
   onBrowse: (connection: Connection) => void;
   onDelete: (connection: Connection) => void;
 }) {
   return <>
     {!!connections.length && (
       <div className="saved-connections">
-        {connections.map((c) => (
+        {connections.map((c) => isRetiredService(c.type) ? (
+          // A connection type TesPlay no longer supports: it can only be removed.
+          <div className="saved-connection retired" key={c.id}>
+            <div className={`service-mark ${c.type}`}>{retiredServices[c.type].slice(0, 1)}</div>
+            <div className="connection-title">
+              <h3>{c.name}</h3>
+              <p>{retiredServices[c.type]} · no longer supported</p>
+            </div>
+            <div className="connection-actions">
+              {!c.shared && <button className="icon-button danger" aria-label={`Remove ${c.name}`} onClick={() => onDelete(c)}><Trash2 size={18} /></button>}
+            </div>
+          </div>
+        ) : (
           <div className="saved-connection" key={c.id}>
             <div className={`service-mark ${c.type}`}>
-              {c.type === "youtube" ? <YouTubeLogo/> : allServices.find((s) => s.id === c.type)?.letters || "TV"}
+              {c.type === "youtube" ? <YouTubeLogo/> : services.find((s) => s.id === c.type)?.letters || "TV"}
             </div>
             <div className="connection-title">
               <h3>{c.name}</h3>
@@ -51,39 +62,14 @@ export default function SavedConnections({ connections, busy, onTest, onEdit, on
                   {c.oauthAuthorized ? "Google signed in" : "Sign in with Google"} <ArrowUpRight size={15} />
                 </button>
               )}
-              {(c.type === "drive" ||
-                (c.type === "youtube" &&
-                  c.authMode ===
-                    "oauth")) && (
+              {c.type === "youtube" && c.authMode === "oauth" && (
                 <a
                   className="button small ghost"
                   href={`/api/${c.type}/auth?connectionId=${encodeURIComponent(c.id)}`}
                 >
-                  {c.type === "youtube"
-                    ? c.oauthAuthorized
-                      ? "Reconnect Google"
-                      : "Connect Google account"
-                    : "Authorize Google Drive"}{" "}
+                  {c.oauthAuthorized ? "Reconnect Google" : "Connect Google account"}{" "}
                   <ArrowUpRight size={15} />
                 </a>
-              )}
-              {c.type === "plex" && (
-                <>
-                  <button
-                    className="icon-button"
-                    aria-label={`Choose server for ${c.name}`}
-                    onClick={() => onPlexOptions(c, "servers")}
-                  >
-                    <Server size={19} />
-                  </button>
-                  <button
-                    className="icon-button"
-                    aria-label={`Choose Plex profile for ${c.name}`}
-                    onClick={() => onPlexOptions(c, "profiles")}
-                  >
-                    <Users size={19} />
-                  </button>
-                </>
               )}
               </>}
               <button className="button small" onClick={() => onBrowse(c)}>

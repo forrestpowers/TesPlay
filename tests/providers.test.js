@@ -7,11 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   mkdtemp,
-  writeFile,
-  mkdir,
-  symlink,
   rm,
-  realpath,
 } from "node:fs/promises";
 import express from "express";
 import {
@@ -25,7 +21,6 @@ import {
   validateRemoteUrl,
   requestRemote,
   remoteData,
-  containedPath,
   parseRange,
   rewriteHls,
   subtitleToVtt,
@@ -243,58 +238,6 @@ test("byte ranges handle suffixes and malformed/multiple ranges; SRT timestamps 
   );
 });
 
-test("local media enforces realpath containment and serves ranges bound to the active profile", async (t) => {
-  const f = await fixture(t);
-  const root = path.join(f.temp, "media");
-  await mkdir(root);
-  await mkdir(path.join(root, "Shows"));
-  await writeFile(path.join(root, "movie.mp4"), "0123456789");
-  await writeFile(path.join(f.temp, "secret.mp4"), "private");
-  await symlink(path.join(f.temp, "secret.mp4"), path.join(root, "escape.mp4"));
-  await assert.rejects(() => containedPath(root, "../secret.mp4"));
-  await assert.rejects(() => containedPath(root, "escape.mp4"));
-  assert.equal(
-    await containedPath(root, "movie.mp4"),
-    await realpath(path.join(root, "movie.mp4")),
-  );
-  const id = f.add("local", { rootPath: root });
-  const catalog = await (
-    await f.request(`/api/catalog?connectionId=${id}`)
-  ).json();
-  assert.equal(catalog.items[0].type, "folder");
-  assert.equal(catalog.items.length, 2);
-  const item = catalog.items.find((x) => x.title === "movie.mp4");
-  const playback = await (
-    await f.request(`/api/playback?connectionId=${id}&itemId=${item.id}`)
-  ).json();
-  assert.match(playback.url, /^\/api\/media\//);
-  assert.ok(!JSON.stringify(playback).includes(root));
-  const part = await f.request(playback.url, {
-    headers: { Range: "bytes=3-6" },
-  });
-  assert.equal(part.status, 206);
-  assert.equal(part.headers.get("content-range"), "bytes 3-6/10");
-  assert.equal(await part.text(), "3456");
-  const denied = await f.request(playback.url, {
-    headers: { "X-Profile": "p2" },
-  });
-  assert.equal(denied.status, 404);
-  assert.equal((await fetch(f.url + playback.url)).status, 401);
-  assert.equal(
-    (await f.request(playback.url, { headers: { Range: "bytes=100-200" } }))
-      .status,
-    416,
-  );
-  const escape = Buffer.from("../secret.mp4").toString("base64url");
-  assert.equal(
-    (await f.request(`/api/playback?connectionId=${id}&itemId=${escape}`))
-      .status,
-    403,
-  );
-  f.connections.delete(id);
-  assert.equal((await f.request(playback.url)).status, 404);
-});
-
 test(
   "Xtream fixtures exercise categories, search, episodes, EPG and secret-free nested HLS playback",
   { skip: !lan },
@@ -428,160 +371,6 @@ test(
 );
 
 test(
-  "Plex fixtures browse folders, preserve profile auth, stream directly and request compatible transcodes",
-  { skip: !lan },
-  async (t) => {
-    const received = [];
-    const upstream = await listen((req, res) => {
-      received.push({ url: req.url, token: req.headers["x-plex-token"] });
-      const u = new URL(req.url, "http://fixture");
-      res.setHeader("Content-Type", "application/json");
-      if (u.pathname === "/library/sections")
-        return res.end(
-          JSON.stringify({
-            MediaContainer: {
-              Directory: [
-                { key: "1", title: "Films", type: "movie" },
-                { key: "2", title: "Shows", type: "show" },
-              ],
-            },
-          }),
-        );
-      if (u.pathname === "/library/sections/1/all")
-        return res.end(
-          JSON.stringify({
-            MediaContainer: {
-              Metadata: [
-                {
-                  ratingKey: "12",
-                  title: "Orbit",
-                  type: "movie",
-                  thumb: "/library/metadata/12/thumb/123",
-                  Media: [{}],
-                },
-              ],
-              totalSize: 1,
-            },
-          }),
-        );
-      if (u.pathname === "/library/sections/2/all")
-        return res.end(JSON.stringify({ MediaContainer: { Metadata: [
-          { ratingKey: "90", title: "Orbit series", type: "show", childCount: 2 },
-        ] } }));
-      if (u.pathname === "/library/metadata/12")
-        return res.end(
-          JSON.stringify({
-            MediaContainer: {
-              Metadata: [
-                {
-                  ratingKey: "12",
-                  title: "Orbit",
-                  type: "movie",
-                  Media: [
-                    {
-                      container: "mp4",
-                      videoCodec: "h264",
-                      audioCodec: "aac",
-                      Part: [{ key: "/library/parts/99/file.mp4", Stream: [] }],
-                    },
-                  ],
-                },
-              ],
-            },
-          }),
-        );
-      if (u.pathname === "/video/:/transcode/universal/start.m3u8") {
-        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-        return res.end("#EXTM3U\n#EXTINF:4,\nsegment.ts\n");
-      }
-      if (u.pathname.includes("/thumb/")) {
-        res.setHeader("Content-Type", "image/jpeg");
-        return res.end("artwork");
-      }
-      res.setHeader("Content-Type", "video/mp4");
-      res.end("movie");
-    }, "0.0.0.0");
-    t.after(upstream.close);
-    const f = await fixture(t);
-    const id = f.add("plex", {
-      url: upstream.url,
-      token: "owner-secret",
-      ownerProfileId: "p1",
-      profileTokens: { p1: { token: "profile-secret" } },
-    });
-    const root = await (
-      await f.request(`/api/catalog?connectionId=${id}`)
-    ).json();
-    assert.equal(root.items[0].type, "folder");
-    assert.equal(root.items[1].type, "folder");
-    assert.equal(root.items[1].contentKind, "series");
-    const shows = await (await f.request(
-      `/api/catalog?connectionId=${id}&parentId=${root.items[1].id}`,
-    )).json();
-    assert.equal(shows.items[0].type, "series");
-    assert.equal(shows.items[0].id, Buffer.from("/library/metadata/90/children").toString("base64url"));
-    const list = await (
-      await f.request(
-        `/api/catalog?connectionId=${id}&parentId=${root.items[0].id}`,
-      )
-    ).json();
-    assert.equal(list.items[0].title, "Orbit");
-    const direct = await (
-      await f.request(`/api/playback?connectionId=${id}&itemId=12`)
-    ).json();
-    assert.equal(direct.type, "video");
-    assert.equal(await (await f.request(direct.url)).text(), "movie");
-    const transcoded = await (
-      await f.request(`/api/playback?connectionId=${id}&itemId=12&transcode=1`)
-    ).json();
-    assert.equal(transcoded.type, "hls");
-    assert.equal(transcoded.provider, "plex");
-    assert.ok(
-      (await (await f.request(transcoded.url)).text()).includes("/api/media/"),
-    );
-    assert.equal((await f.request(`${transcoded.url}/heartbeat`, {method: 'POST'})).status, 200);
-    const startedSession = new URL(received.find(x => x.url.includes('/start.m3u8')).url, 'http://fixture').searchParams.get('session');
-    const pingedSession = new URL(received.find(x => x.url.includes('/universal/ping')).url, 'http://fixture').searchParams.get('session');
-    assert.equal(pingedSession, startedSession, 'heartbeat must keep the actual playback transcode alive');
-    assert.equal(transcoded.plexSessionId, undefined, 'upstream session IDs stay inside the authenticated media proxy');
-    assert.ok(received.every((x) => x.token === "profile-secret"));
-    assert.ok(received.some((x) => x.url.includes("videoCodec=h264")));
-    assert.ok(received.some((x) => { const u = new URL(x.url, "http://fixture"); return u.pathname.includes("transcode") && u.searchParams.get("directStream") === "0" && u.searchParams.get("audioCodec") === "aac"; }));
-    assert.equal(
-      (
-        await f.request(`/api/catalog?connectionId=${id}`, {
-          headers: { "X-Profile": "p2" },
-        })
-      ).status,
-      400,
-    );
-    const invalid = Buffer.from("/:/prefs").toString("base64url");
-    assert.equal(
-      (await f.request(`/api/catalog?connectionId=${id}&parentId=${invalid}`))
-        .status,
-      400,
-    );
-    const art = list.items[0].poster;
-    assert.match(art, /^\/api\/media\/a_/);
-    assert.ok(!art.includes("profile-secret"));
-    const restarted = await fixture(t, {
-      key: f.key,
-      connections: f.connections,
-    });
-    assert.equal(await (await restarted.request(art)).text(), "artwork");
-    assert.equal(
-      (await restarted.request(art, { headers: { "X-Profile": "p2" } })).status,
-      404,
-    );
-    const tampered = art.slice(0, -10) + "AAAAAAAAAA";
-    assert.equal((await restarted.request(tampered)).status, 404);
-    f.connections.get(id).config.profileTokens.p1.token = "different-home-user";
-    assert.equal((await f.request(direct.url)).status, 404);
-    assert.equal((await restarted.request(art)).status, 404);
-  },
-);
-
-test(
   "remote requests reject private hosts without explicit configuration and revalidate redirect targets",
   { skip: !lan },
   async (t) => {
@@ -602,220 +391,6 @@ test(
     );
   },
 );
-
-test("Plex PIN is session-bound and Home switching saves the resource token only for the selected local profile", async (t) => {
-  let authorized = false;
-  const requests = [];
-  const f = await fixture(t, {
-    remoteData: async (input, options = {}) => {
-      const u = new URL(input);
-      requests.push({ url: u, options });
-      let data;
-      if (u.pathname === "/api/v2/pins" && options.method === "POST")
-        data = { id: 123, code: "pair-code" };
-      else if (u.pathname === "/api/v2/pins/123")
-        data = {
-          id: 123,
-          code: "pair-code",
-          ...(authorized ? { authToken: "account-secret" } : {}),
-        };
-      else if (u.pathname === "/api/v2/resources")
-        data = [
-          {
-            name: "Home",
-            clientIdentifier: "machine1",
-            provides: "server",
-            accessToken:
-              options.headers["X-Plex-Token"] === "child-account-secret"
-                ? "child-resource-secret"
-                : "owner-resource-secret",
-            connections: [
-              {
-                uri: "http://192.168.1.10:32400",
-                local: true,
-                protocol: "http",
-              },
-            ],
-          },
-        ];
-      else if (u.pathname === "/api/home/users")
-        data = {
-          MediaContainer: { User: [{ id: 7, title: "Child", protected: 1 }] },
-        };
-      else if (u.pathname === "/api/home/users/7/switch") {
-        assert.equal(new URLSearchParams(options.body).get("pin"), "1234");
-        return '<user id="7" title="Child" authToken="child-account-secret" />';
-      } else if (u.pathname === "/library/sections") {
-        assert.equal(options.headers["X-Plex-Token"], "child-resource-secret");
-        data = { MediaContainer: { Directory: [] } };
-      } else throw new Error("Unexpected Plex fixture request");
-      return options.text ? JSON.stringify(data) : data;
-    },
-  });
-  const post = (url, body, headers = {}) =>
-    f.request(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify(body),
-    });
-  const pin = await (await post("/api/plex/pin", {})).json();
-  assert.equal(pin.id, 123);
-  assert.ok(pin.url.startsWith("https://app.plex.tv/auth#?"));
-  assert.ok(!JSON.stringify(pin).includes("secret"));
-  assert.equal(
-    (await post("/api/plex/pin/check", pin, { "X-Session": "other" })).status,
-    400,
-  );
-  assert.equal(
-    (await (await post("/api/plex/pin/check", pin)).json()).pending,
-    true,
-  );
-  authorized = true;
-  const result = await (await post("/api/plex/pin/check", pin)).json();
-  assert.equal(result.servers[0].name, "Home");
-  assert.ok(!JSON.stringify(result).includes("secret"));
-  const id = result.connection.id;
-  const profiles = await (await f.request(`/api/plex/${id}/profiles`)).json();
-  assert.equal(profiles.profiles[0].protected, true);
-  assert.equal(
-    (
-      await post(
-        `/api/plex/${id}/profile`,
-        { id: "7", pin: "1234" },
-        { "X-Profile": "p2" },
-      )
-    ).status,
-    200,
-  );
-  assert.equal(
-    f.connections.get(id).config.profileTokens.p1.token,
-    "owner-resource-secret",
-  );
-  assert.equal(
-    f.connections.get(id).config.profileTokens.p2.token,
-    "child-resource-secret",
-  );
-  assert.equal(
-    (
-      await f.request(`/api/catalog?connectionId=${id}`, {
-        headers: { "X-Profile": "p2" },
-      })
-    ).status,
-    200,
-  );
-  assert.equal((await post("/api/plex/pin/check", pin)).status, 400);
-  assert.ok(
-    requests
-      .filter((x) => x.url.hostname === "plex.tv")
-      .every((x) => x.options.headers["X-Plex-Client-Identifier"]),
-  );
-});
-
-test("Drive OAuth validates state/session, uses PKCE, refreshes tokens, filters folders and preserves page tokens", async (t) => {
-  const previous = process.env.PUBLIC_URL;
-  process.env.PUBLIC_URL = "https://aperture.example";
-  t.after(() => {
-    if (previous === undefined) delete process.env.PUBLIC_URL;
-    else process.env.PUBLIC_URL = previous;
-  });
-  const requests = [];
-  const f = await fixture(t, {
-    remoteData: async (input, options = {}) => {
-      const u = new URL(input);
-      requests.push({ url: u, options });
-      if (u.hostname === "oauth2.googleapis.com") {
-        const body = new URLSearchParams(options.body);
-        assert.equal(body.get("client_secret"), "client-secret");
-        if (body.get("grant_type") === "authorization_code") {
-          assert.ok(body.get("code_verifier").length >= 43);
-          assert.equal(
-            body.get("redirect_uri"),
-            "https://aperture.example/api/drive/callback",
-          );
-          return {
-            access_token: "drive-access-secret",
-            refresh_token: "drive-refresh-secret",
-            expires_in: 3600,
-          };
-        }
-        assert.equal(body.get("refresh_token"), "drive-refresh-secret");
-        return { access_token: "renewed-access-secret", expires_in: 3600 };
-      }
-      if (u.pathname === "/drive/v3/files") {
-        assert.equal(
-          options.headers.Authorization,
-          "Bearer renewed-access-secret",
-        );
-        assert.ok(u.searchParams.get("q").includes("'folder1' in parents"));
-        assert.equal(u.searchParams.get("pageToken"), "opaque-page");
-        return {
-          files: [{ id: "movie1", name: "Film", mimeType: "video/mp4" }],
-          nextPageToken: "next-page",
-        };
-      }
-      if (u.pathname === "/drive/v3/files/movie1")
-        return {
-          id: "movie1",
-          name: "Film",
-          mimeType: "video/mp4",
-          parents: ["folder1"],
-          capabilities: { canDownload: true },
-        };
-      if (u.pathname === "/drive/v3/files/outside")
-        return { id: "outside", mimeType: "video/mp4", parents: [] };
-      throw new Error("Unexpected Drive fixture request");
-    },
-  });
-  const id = f.add("drive", {
-    clientId: "client-id",
-    clientSecret: "client-secret",
-    folderId: "folder1",
-  });
-  const begin = await f.request(`/api/drive/auth?connectionId=${id}`, {
-    redirect: "manual",
-  });
-  assert.equal(begin.status, 302);
-  const authorization = new URL(begin.headers.get("location"));
-  assert.equal(authorization.hostname, "accounts.google.com");
-  assert.equal(authorization.searchParams.get("code_challenge_method"), "S256");
-  assert.equal(
-    authorization.searchParams.get("scope"),
-    "https://www.googleapis.com/auth/drive.readonly",
-  );
-  assert.equal(
-    (
-      await f.request("/api/drive/callback?state=invalid&code=code", {
-        redirect: "manual",
-      })
-    ).status,
-    400,
-  );
-  const callback = `/api/drive/callback?state=${authorization.searchParams.get("state")}&code=valid-code`;
-  assert.equal((await f.request(callback, { redirect: "manual" })).status, 302);
-  assert.equal((await f.request(callback, { redirect: "manual" })).status, 400);
-  const config = f.connections.get(id).config;
-  assert.equal(config.refreshToken, "drive-refresh-secret");
-  config.expiresAt = 0;
-  const catalog = await (
-    await f.request(`/api/catalog?connectionId=${id}&pageToken=opaque-page`)
-  ).json();
-  assert.equal(catalog.items[0].title, "Film");
-  assert.equal(catalog.nextPageToken, "next-page");
-  assert.ok(!JSON.stringify(catalog).includes("secret"));
-  const playback = await (
-    await f.request(`/api/playback?connectionId=${id}&itemId=movie1`)
-  ).json();
-  assert.match(playback.url, /^\/api\/media\//);
-  assert.ok(!JSON.stringify(playback).includes("secret"));
-  assert.equal(
-    (await f.request(`/api/playback?connectionId=${id}&itemId=outside`)).status,
-    403,
-  );
-  assert.equal(
-    requests.filter((x) => x.url.hostname === "oauth2.googleapis.com").length,
-    2,
-  );
-});
 
 test("YouTube searches stay server-side", async (t) => {
   const f = await fixture(t, {
@@ -1009,72 +584,6 @@ test("Xtream next episode follows numeric season/episode order independently of 
   );
 });
 
-test("Plex next episode traverses all server pages and seasons with the selected Home token", async (t) => {
-  const pageStarts = [];
-  const episodes = Array.from({ length: 205 }, (_, index) => ({
-    ratingKey: String(index + 1),
-    type: "episode",
-    title: `Episode ${index + 1}`,
-    parentIndex: Math.floor(index / 200) + 1,
-    index: (index % 200) + 1,
-    grandparentRatingKey: "900",
-    Media: [{}],
-  }));
-  const f = await fixture(t, {
-    remoteData: async (input, options) => {
-      const u = new URL(input);
-      assert.equal(options.headers["X-Plex-Token"], "home-profile-secret");
-      if (u.pathname === "/library/metadata/900/allLeaves") {
-        const start = Number(u.searchParams.get("X-Plex-Container-Start"));
-        const size = Number(u.searchParams.get("X-Plex-Container-Size"));
-        pageStarts.push(start);
-        return JSON.stringify({
-          MediaContainer: {
-            Metadata: episodes.slice(start, start + size).reverse(),
-            totalSize: episodes.length,
-          },
-        });
-      }
-      return JSON.stringify({
-        MediaContainer: {
-          Metadata: [
-            episodes.find((x) => x.ratingKey === u.pathname.split("/").at(-1)),
-          ],
-        },
-      });
-    },
-  });
-  const id = f.add("plex", {
-    url: "https://plex.example",
-    token: "owner-secret",
-    ownerProfileId: "p1",
-    profileTokens: { p2: { token: "home-profile-secret" } },
-  });
-  const next = await (
-    await f.request(`/api/episodes/next?connectionId=${id}&itemId=200`, {
-      headers: { "X-Profile": "p2" },
-    })
-  ).json();
-  assert.equal(next.item.id, "201");
-  assert.equal(next.item.seasonNumber, 2);
-  assert.equal(next.item.episodeNumber, 1);
-  assert.deepEqual(pageStarts, [0, 200]);
-  const final = await (
-    await f.request(`/api/episodes/next?connectionId=${id}&itemId=205`, {
-      headers: { "X-Profile": "p2" },
-    })
-  ).json();
-  assert.equal(final.item, null);
-  assert.equal(
-    (
-      await f.request(`/api/episodes/next?connectionId=${id}&itemId=200`, {
-        headers: { "X-Profile": "p3" },
-      })
-    ).status,
-    400,
-  );
-});
-
 test("YouTube OAuth binds provider and session, preserves/rotates offline tokens, and refreshes after restart", async (t) => {
   const previous = process.env.PUBLIC_URL;
   process.env.PUBLIC_URL = "https://tesplay.example";
@@ -1155,11 +664,6 @@ test("YouTube OAuth binds provider and session, preserves/rotates offline tokens
           headers: { "X-Session": "other" },
         })
       ).status,
-      400,
-    );
-    assert.equal(
-      (await f.request(`/api/drive/callback?${query}`, { redirect: "manual" }))
-        .status,
       400,
     );
     const callback = await f.request(`/api/youtube/callback?${query}`, {
@@ -1376,23 +880,6 @@ test('media requests reuse an authorized provider connection while forbidden add
  assert.equal(opened,1);await assert.rejects(requestRemote(url),/restricted network/);
 });
 
-test('global local-file search visits nested folders without following symlinks outside the shared root',async t=>{
- const root=await mkdtemp(path.join(os.tmpdir(),'tesplay-search-root-')),outside=await mkdtemp(path.join(os.tmpdir(),'tesplay-search-outside-'));
- t.after(()=>Promise.all([rm(root,{recursive:true,force:true}),rm(outside,{recursive:true,force:true})]));
- await mkdir(path.join(root,'Shows'));await writeFile(path.join(root,'Shows','Match episode.mp4'),'video');await writeFile(path.join(root,'Match film.mkv'),'video');await writeFile(path.join(outside,'Match private.mp4'),'private');await symlink(outside,path.join(root,'External'));
- const f=await fixture(t);const id=f.add('local',{rootPath:root});
- const data=await(await f.request(`/api/catalog?connectionId=${id}&q=Match&recursive=1`)).json();
- assert.deepEqual(data.items.map(i=>i.title).sort(),['Match episode.mp4','Match film.mkv']);
- const nested=data.items.find(i=>i.title==='Match episode.mp4');assert.equal(Buffer.from(nested.id,'base64url').toString('utf8'),path.join('Shows','Match episode.mp4'));
-});
-
-test('Plex Auto keeps compatible Matroska files direct while explicit compatibility transcodes',async t=>{
- const f=await fixture(t,{remoteData:async()=>JSON.stringify({MediaContainer:{Metadata:[{ratingKey:'13',type:'episode',Media:[{container:'mkv',videoCodec:'av1',audioCodec:'aac',Part:[{key:'/library/parts/99/file.mkv',Stream:[]}]}]}]}})});
- const id=f.add('plex',{url:'https://plex.example',token:'fixture'});
- const direct=await(await f.request(`/api/playback?connectionId=${id}&itemId=13&kind=episode`)).json();assert.equal(direct.type,'video');assert.equal(direct.provider,'plex');
- const compatible=await(await f.request(`/api/playback?connectionId=${id}&itemId=13&kind=episode&transcode=1`)).json();assert.equal(compatible.type,'hls');
-});
-
 test('IPTV Home chooses recent provided posters while browsing retains titles without artwork',async t=>{
   const f=await fixture(t,{remoteData:async input=>{
     const action=new URL(input).searchParams.get('action');
@@ -1450,47 +937,11 @@ test('a pending manual IPTV refresh does not delay readers of the saved catalog'
   assert.equal((await(await f.request(endpoint)).json()).items[0].title,'New film');
 });
 
-test('Plex playback options read metadata without starting playback, and chosen audio and quality reach the transcode',async t=>{
-  if(!lan)return t.skip('No private LAN address');
-  let transcode;const upstream=await listen((req,res)=>{transcode=new URL(req.url,'http://fixture');res.setHeader('Content-Type','application/vnd.apple.mpegurl');res.end('#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-ENDLIST\n');},'0.0.0.0');t.after(()=>upstream.close());
-  const calls=[];
-  const meta={ratingKey:'42',type:'movie',title:'A film',librarySectionID:'1',duration:120000,viewOffset:23000,Media:[{container:'mp4',videoCodec:'h264',audioCodec:'aac',Part:[{id:'50',key:'/library/parts/50/file.mp4',Stream:[{id:'61',streamType:2,codec:'aac',languageCode:'eng',displayTitle:'English',selected:1},{id:'62',streamType:2,codec:'aac',languageCode:'nld',displayTitle:'Dutch'},{id:'63',streamType:3,codec:'srt',languageCode:'eng',displayTitle:'English subtitles',key:'/library/streams/63.srt'}]}]}]};
-  const f=await fixture(t,{remoteData:async(input,options)=>{const u=new URL(input);calls.push({u,method:options.method||'GET',token:options.headers['X-Plex-Token']});return u.pathname==='/library/metadata/42'?JSON.stringify({MediaContainer:{Metadata:[meta]}}):'';}});
-  const id=f.add('plex',{url:upstream.url,token:'secret',profileTokens:{p2:{token:'home-secret'}}});
-  const options=await(await f.request(`/api/playback/options?connectionId=${id}&itemId=42&kind=movie`,{headers:{'X-Profile':'p2'}})).json();
-  assert.deepEqual(options.audio.map(a=>a.label),['English','Dutch']);assert.equal(options.subtitles[0].id,'plex-subtitle-63');assert.equal(options.item.resumeSeconds,23);assert.equal(calls.length,1);assert.equal(calls[0].token,'home-secret');assert.ok(!JSON.stringify(options).includes('secret'));
-  const playback=await(await f.request(`/api/playback?connectionId=${id}&itemId=42&kind=movie&audioTrackId=plex-audio-62&qualityId=720p`,{headers:{'X-Profile':'p2'}})).json();
-  assert.equal(playback.type,'hls');assert.equal(playback.selectedAudioTrackId,'plex-audio-62');assert.equal(playback.resumeSeconds,23);assert.equal(playback.subtitles[0].id,'plex-subtitle-63');
-  const setAudio=calls.find(c=>c.method==='PUT');assert.equal(setAudio.u.pathname,'/library/parts/50');assert.equal(setAudio.u.searchParams.get('audioStreamID'),'62');assert.equal(setAudio.token,'home-secret');
-  assert.equal((await f.request(playback.url,{headers:{'X-Profile':'p2'}})).status,200);
-  assert.equal(transcode.searchParams.get('videoResolution'),'1280x720');assert.equal(transcode.searchParams.get('maxVideoBitrate'),'4000');assert.equal(transcode.searchParams.get('directStream'),'0');
-  assert.equal((await f.request(`/api/playback?connectionId=${id}&itemId=42&kind=movie&audioTrackId=plex-audio-999`)).status,400);
-  assert.equal((await f.request(`/api/playback?connectionId=${id}&itemId=42&kind=movie&qualityId=bad`)).status,400);
-});
-
-test('episode catalogue provides previous and next across seasons and can open a Plex series directly',async t=>{
-  const episodes=[{ratingKey:'1',title:'Pilot',type:'episode',grandparentRatingKey:'9',parentIndex:1,index:1,Media:[{}]},{ratingKey:'2',title:'Return',type:'episode',grandparentRatingKey:'9',parentIndex:2,index:1,Media:[{}]}];
-  const f=await fixture(t,{remoteData:async input=>{const u=new URL(input);return JSON.stringify({MediaContainer:{Metadata:u.pathname.endsWith('/allLeaves')?episodes:u.pathname==='/library/metadata/9'?[{ratingKey:'9',type:'show'}]:[episodes[1]],totalSize:u.pathname.endsWith('/allLeaves')?2:1}});}});
-  const id=f.add('plex',{url:'https://plex.example',token:'secret'});
-  const result=await(await f.request(`/api/episodes?connectionId=${id}&itemId=2`)).json();assert.equal(result.previous.id,'1');assert.equal(result.next,null);assert.equal(result.items.length,2);
-  const show=Buffer.from('/library/metadata/9/children').toString('base64url');
-  const whole=await(await f.request(`/api/episodes?connectionId=${id}&itemId=${show}&kind=series`)).json();assert.equal(whole.items[1].seasonNumber,2);
-});
-
 test('YouTube browsing adds durations in one batched metadata call and leaves unknown durations visible',async t=>{
   const calls=[],channel='UC'+'a'.repeat(22);
   const f=await fixture(t,{remoteData:async input=>{const u=new URL(input);calls.push(u.pathname);if(u.pathname.endsWith('/channels'))return {items:[{contentDetails:{relatedPlaylists:{uploads:'UU'+'a'.repeat(22)}}}]};if(u.pathname.endsWith('/playlistItems'))return {items:[{contentDetails:{videoId:'abcdefghijk'},snippet:{title:'Short',channelId:channel}},{contentDetails:{videoId:'lmnopqrstuv'},snippet:{title:'Long',channelId:channel}},{contentDetails:{videoId:'zzzzzzzzzzz'},snippet:{title:'Unknown',channelId:channel}}]};if(u.pathname.endsWith('/videos')){assert.equal(u.searchParams.get('part'),'contentDetails');return {items:[{id:'abcdefghijk',contentDetails:{duration:'PT3M'}},{id:'lmnopqrstuv',contentDetails:{duration:'PT1H2M3S'}}]};}throw Error('Unexpected request');}});
   const id=f.add('youtube',{authMode:'apiKey',apiKey:'secret'});
   const result=await(await f.request(`/api/youtube/${id}/channel/${channel}/videos`)).json();assert.equal(result.items[0].duration,180);assert.equal(result.items[1].duration,3723);assert.equal(result.items[2].duration,undefined);assert.equal(calls.filter(p=>p.endsWith('/videos')).length,1);
-});
-
-test('owned local files expose the same representation across ranges and change it when the file changes',async t=>{
-  const f=await fixture(t),file=path.join(f.temp,'representation.mp4');await writeFile(file,Buffer.from('file content'));
-  const id=f.add('local',{rootPath:f.temp}),itemId=Buffer.from('representation.mp4').toString('base64url');
-  const playback=await(await f.request(`/api/playback?connectionId=${id}&itemId=${itemId}&kind=video`)).json();
-  const first=await f.request(playback.url,{headers:{Range:'bytes=0-3'}});await first.arrayBuffer();const second=await f.request(playback.url,{headers:{Range:'bytes=4-7'}});await second.arrayBuffer();
-  const identity=first.headers.get('x-csp-representation-id');assert.match(identity,/^mr1_[A-Za-z0-9_-]{43}$/);assert.equal(second.headers.get('x-csp-representation-id'),identity);
-  await writeFile(file,Buffer.from('changed file content'));const changed=await f.request(playback.url);await changed.arrayBuffer();assert.notEqual(changed.headers.get('x-csp-representation-id'),identity);
 });
 
 test("YouTube playback resolves through InnerTube first and keeps yt-dlp as the fallback", async (t) => {

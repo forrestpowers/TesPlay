@@ -1,5 +1,4 @@
 import { errorMessage } from './api';
-import { mergePlexContinuity, type PlexContinuity } from './plex-continuity';
 import { itemKey } from './types';
 import type { Connection, Library, MediaItem, Starred } from './types';
 
@@ -75,17 +74,6 @@ export class ProfileLibrary {
     const local = await this.dependencies.request<Library>('/library/state');
     if (!current()) return;
     this.update(identity, local);
-    const plex = this.dependencies.connections().filter(connection => connection.type === 'plex');
-    if (!plex.length) return;
-    const results = await Promise.allSettled(plex.map(connection =>
-      this.dependencies.request<PlexContinuity>(`/plex/${connection.id}/continuity`),
-    ));
-    if (!current()) return;
-    const successful = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
-    if (results.some(result => result.status === 'rejected')) {
-      successful.push({ progress: [], watchlist: [], notes: ['Plex continuity could not refresh. Check the connection and linked Plex Home profile.'] });
-    }
-    this.update(identity, library => mergePlexContinuity(library, successful));
   };
 
   star = async (value: Starred): Promise<void> => {
@@ -148,11 +136,10 @@ export class ProfileLibrary {
     // A new account session never inherits queued writes from an earlier login.
     const pending = previous.catch(() => {}).then(async () => {
       if (!this.isCurrentAccount(identity)) return;
-      const result = await this.dependencies.request<{ plexSyncError?: string }>('/library/progress', {
+      await this.dependencies.request('/library/progress', {
         item, seconds, duration, state, profileId: identity.profileId,
       }, undefined, undefined, true);
       if (!this.isCurrent(identity)) return;
-      if (result.plexSyncError) this.notify(identity, result.plexSyncError);
       this.update(identity, library => ({
         ...library,
         progress: [

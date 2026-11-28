@@ -6,7 +6,7 @@
 }
 .media-details-modal > .modal-content { padding: 0; }
 .media-details-poster, .media-details-option-row, .media-details-phone-footer,
-.media-details-advanced, .media-details-settings-heading > span { display: none; }
+.media-details-settings-heading > span { display: none; }
 .media-details-hero {
   position: relative;
   display: flex;
@@ -98,12 +98,6 @@
   .media-details-option-row strong { max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
   .media-details-checks { gap: 0; margin: 8px 0 0; }
   .media-details-checks label { min-height: 44px; font-size: 12px; }
-  .media-details-checks .media-details-desktop-compatibility { display: none; }
-  .media-details-advanced { display: block; order: 1; }
-  .media-details-advanced summary { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--secondary); font-size: 12px; cursor: pointer; list-style: none; }
-  .media-details-advanced summary::-webkit-details-marker { display: none; }
-  .media-details-advanced summary::after { content: '+'; font-size: 16px; }
-  .media-details-advanced[open] summary::after { content: '−'; }
   .media-details-phone-footer { display: block; flex-shrink: 0; padding: 12px 20px calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--surface); }
   .media-details-actions > .button { min-height: 48px; border-radius: 9px; font-size: 14px; font-weight: 600; }
   .media-details-save { flex-basis: 49px; width: 49px; height: 49px; border-radius: 9px; }

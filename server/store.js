@@ -26,10 +26,6 @@ const publicProfile = (profile) => ({
 const descriptions = {
   xtream: "Live TV, movies & series",
   m3u: "Your IPTV playlist",
-  plex: "Your personal media server",
-  drive: "Your Google Drive library",
-  local: "Local & mounted network files",
-  stremio: 'Your Stremio addons, movies & series',
   youtube: "YouTube videos & channels",
 };
 const itemKey = (item) =>

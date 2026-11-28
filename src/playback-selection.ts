@@ -1,8 +1,8 @@
 import { ALL_FORMATS, Input, UrlSource } from 'mediabunny';
 import type { MediaTrack } from '@canvas-stream-player/contracts';
 import { AccessSessionExpiredError, api, tesPlayFetch, youtubeId } from './api';
-import type { MediaItem, Playback, PlaybackSettings, PlaybackOptions, PlayerPreferences } from './types';
-import { defaultPlayerPreferences, preferredLanguageTrack } from './player-preferences';
+import type { MediaItem, Playback, PlaybackSettings, PlayerPreferences } from './types';
+import { defaultPlayerPreferences } from './player-preferences';
 
 /** The YouTube picture size chosen in the player, kept for later videos on this screen; null is automatic. */
 export const YOUTUBE_HEIGHT_KEY = 'tesplay.youtubeHeight';
@@ -15,7 +15,6 @@ export function writeYouTubeHeight(height: number | null): void {
 }
 export function playbackPath(item: MediaItem, settings: PlaybackSettings & { youtubeHeight?: number | null } = {}) {
   const params = new URLSearchParams({connectionId:item.connectionId || '',itemId:item.id,kind:item.type});
-  if (settings.compatibility) params.set('transcode','1');
   // Car mode also converts the audio, so it takes the place of audio conversion.
   if (settings.carMode) { params.set('compatibility','video'); params.set('carHeight',String(settings.carMode)); }
   // Where a converted IPTV movie or episode starts; ignored when the title plays directly.
@@ -23,7 +22,6 @@ export function playbackPath(item: MediaItem, settings: PlaybackSettings & { you
   else if (settings.audioRemux) params.set('compatibility','audio');
   if (settings.audioTrackId && settings.audioTrackId !== 'default') params.set('audioTrackId',settings.audioTrackId);
   if (settings.qualityId) params.set('qualityId',settings.qualityId);
-  if (settings.sourceId) params.set('sourceId', settings.sourceId);
   // A YouTube picture size chosen on this screen, served straight from YouTube.
   if (settings.youtubeHeight) params.set('height', String(settings.youtubeHeight));
   return `/playback?${params}`;
@@ -33,14 +31,6 @@ export async function resolvePlayback(item: MediaItem, settings: PlaybackSetting
   const preferencesRequest = defaults ? Promise.resolve(defaults) : api<PlayerPreferences>('/player/preferences',undefined,undefined,signal).catch(() => { signal.throwIfAborted(); return defaultPlayerPreferences; });
   preferencesRequest.catch(() => {});
   const effective = { ...settings };
-  if (item.providerType === 'plex' && !item.playbackUrl) {
-    const preferences = await preferencesRequest;
-    if (effective.qualityId === undefined) effective.qualityId = item.type === 'audio' ? 'auto' : preferences.qualityId;
-    if (effective.audioTrackId === undefined && preferences.audioLanguage) {
-      const options = await api<PlaybackOptions>(`/playback/options?${new URLSearchParams({connectionId:item.connectionId || '',itemId:item.id,kind:item.type})}`,undefined,undefined,signal).catch(() => { signal.throwIfAborted(); return {audio:[]}; });
-      effective.audioTrackId = preferredLanguageTrack(options.audio,preferences.audioLanguage)?.id;
-    }
-  }
   let playback: Playback;
   const youtubeHeight = item.providerType === 'youtube' || (item.playbackUrl && youtubeId(item.playbackUrl)) ? readYouTubeHeight() : null;
   const sized = (path: string) => youtubeHeight ? `${path}${path.includes('?') ? '&' : '?'}height=${youtubeHeight}` : path;

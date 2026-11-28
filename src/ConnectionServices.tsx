@@ -2,15 +2,14 @@ import { Plus } from 'lucide-react';
 import { services } from './catalog';
 import { YouTubeLogo } from './components';
 
-export default function ConnectionServices({ preview, onSignIn, onAdd, canUseLocal=true }: {
+export default function ConnectionServices({ preview, onSignIn, onAdd }: {
   preview: boolean;
   onSignIn: () => void;
   onAdd: (type: string) => void;
-  canUseLocal?:boolean;
 }) {
   return (
     <div className="connection-grid">
-      {services.filter(service=>service.id!=='local'||canUseLocal).map((s) => (
+      {services.map((s) => (
         <article className="connection-card" key={s.id}>
           <div className="connection-card-top">
             <div
@@ -20,7 +19,7 @@ export default function ConnectionServices({ preview, onSignIn, onAdd, canUseLoc
               {s.id === "youtube" ? <YouTubeLogo/> : s.letters}
             </div>
             <span className="type-label">
-              {s.id === "local" ? "On your server" : "Personal connection"}
+              Personal connection
             </span>
           </div>
           <h2>{s.name}</h2>

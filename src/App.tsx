@@ -44,8 +44,8 @@ import Remote, { PairRemote } from "./Remote";
 import { isTeslaRearScreen } from "./rear-screen";
 import { isPhoneBrowser } from './phone-device';
 import Navigation from './Navigation';
+import { isRetiredService } from './catalog';
 const RearScreen=lazy(()=>import("./RearScreen"));
-const StremioSourcesDialog = lazy(() => import("./StremioSourcesDialog"));
 const MediaDetails = lazy(() => import("./MediaDetails"));
 const loadPlayer = () => import("./Player");
 const Player = lazy(loadPlayer);
@@ -103,11 +103,13 @@ export default function App() {
     [fatal, setFatal] = useState(""),
     [preview, setPreview] = useState(false);
   const [view, setView] = useState<View>(initialView),
-    [connections, setConnections] = useState<Connection[]>([]),
+    [allConnections, setConnections] = useState<Connection[]>([]),
     [selectedConnection, setSelectedConnection] = useState<Connection | null>(
       null,
     ),
     [kind, setKind] = useState("all");
+  // Connections of a type TesPlay no longer supports are listed in Settings only, to be removed.
+  const connections = useMemo(() => allConnections.filter(c => !isRetiredService(c.type)), [allConnections]);
   const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE_SIZE);
   const [search, setSearch] = useState(""),
     [query, setQuery] = useState(""),
@@ -121,7 +123,6 @@ export default function App() {
     [nextEpisode, setNextEpisode] = useState<MediaItem | undefined>(),
     [playerIdentity, setPlayerIdentity] = useState<LibraryIdentity | null>(null),
     [details, setDetails] = useState<MediaItem | null>(null),
-    [stremioTitle, setStremioTitle] = useState<MediaItem | null>(null),
     [profileOpen, setProfileOpen] = useState(false),
     [profileName, setProfileName] = useState(""),
     [profileBusy, setProfileBusy] = useState(false),
@@ -181,12 +182,11 @@ export default function App() {
     onToast: showToast,
   });
   const library = useMemo(() => filterLibraryForYouTubeVisibility(rawLibrary, hideYouTubeShorts, connections), [rawLibrary, hideYouTubeShorts, connections]);
-  // Movies and Series only appear when a connected library can fill them: IPTV movies and
-  // series (when on-demand is on), or an older Drive, Plex or Stremio connection.
+  // Movies and Series only appear when IPTV movies and series are switched on.
   const hiddenDestinations = useMemo(() => {
     const types = new Set(connections.map(c => c.type === 'xtream' && c.onDemand ? 'xtream-on-demand' : c.type));
     const any = (...wanted: string[]) => wanted.some(type => types.has(type));
-    return [...(any('plex', 'stremio', 'drive', 'local', 'xtream-on-demand') ? [] : ['movies']), ...(any('plex', 'stremio', 'xtream-on-demand') ? [] : ['series'])];
+    return any('xtream-on-demand') ? [] : ['movies', 'series'];
   }, [connections]);
   useEffect(() => {
     setHistoryLimit(HISTORY_PAGE_SIZE);
@@ -291,8 +291,6 @@ export default function App() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [signedIn, loadLibrary, reloadAuth, reloadPreferences]);
-  const plexConnectionKey=connections.filter(c=>c.type==='plex').map(c=>c.id).join(',');
-  useEffect(()=>{if(signedIn&&plexConnectionKey)void loadLibrary().catch(()=>{});},[signedIn,plexConnectionKey,auth?.activeProfileId,loadLibrary]);
   useEffect(() => {
     setNextEpisode(undefined);setPreviousEpisode(undefined);setSeriesEpisodes([]);setEpisodesError('');setEpisodesLoading(false);
     if (!signedIn || player?.type !== "episode" || !player.connectionId) return;
@@ -469,7 +467,6 @@ export default function App() {
   function inspect(item:MediaItem) {seriesOpenRequest.current?.abort();setDetails(item);}
   function open(item: MediaItem, settings:PlaybackSettings = {}) {
     seriesOpenRequest.current?.abort();
-    if(item.unavailable) { showToast("This Watchlist title is not available on your Plex server."); return; }
     if(item.type==='series') {
       if(!rearScreen)beginPlaybackGesture();
       const controller=new AbortController(),identity=activeLibraryRef.current;seriesOpenRequest.current=controller;
@@ -493,7 +490,6 @@ export default function App() {
       }
       return;
     }
-    if ((item.providerType === 'stremio' || connections.some(c => c.id === item.connectionId && c.type === 'stremio')) && !settings.sourceId) { setStremioTitle(item); return; }
     if(activeRemoteRoom) {
       void api('/remote/command',{roomId:activeRemoteRoom,command:'load',item,settings:{sourceId:settings.sourceId}}).then(()=>showToast(`Opening ${item.title} on your paired screen.`)).catch(e=>showToast(errorMessage(e)));return;
     }
@@ -563,7 +559,6 @@ export default function App() {
       ))}
     </div>
   );
-  const stremioPicker = stremioTitle && <Suspense fallback={<Busy label="Finding Stremio sources…"/>}><StremioSourcesDialog key={itemKey(stremioTitle)} item={stremioTitle} onClose={()=>setStremioTitle(null)} onPlay={sourceId=>{const item=stremioTitle;setStremioTitle(null);open(item,{sourceId});}}/></Suspense>;
   const queueNavigation = player ? visibleQueueNeighbors(rawLibrary.queue || [], player, hideYouTubeShorts, connections, rawLibrary.progress) : null;
   const playerView=player&&<Suspense fallback={rearScreen?<div className="rear-opening-player"><Busy label="Opening player"/></div>:<Busy label="Opening player"/>}>
     <Player key={rearScreen?`${playerProfileId}:remote:${remoteLoadId}`:playerProfileId||"player"}
@@ -571,7 +566,6 @@ export default function App() {
       episodes={seriesEpisodes} episodesLoading={episodesLoading} episodesError={episodesError}
       previous={preferencesReady ? (queueNavigation?.inQueue ? queueNavigation.previous : previousEpisode) : undefined}
       resume={(()=>{const saved=rawLibrary.progress.find(p=>itemKey(p.item)===itemKey(player));return saved&&saved.duration>0&&saved.seconds/saved.duration<.97?saved.seconds:0;})()}
-      canTranscode={connections.some(c=>c.id===player.connectionId&&c.type==="plex")}
       onClose={()=>{setPlayer(null);if(!rearScreen)closePlaybackAudio();}}
       onRemoteState={state=>{remoteSnapshot.current={key:itemKey(player),state};}}
       onProgress={saveProgress}
@@ -580,7 +574,7 @@ export default function App() {
       defaultCarMode={preferencesReady ? preferences.carMode : undefined}
       onNext={item=>open(item,{sourceId:'auto'})}/>
   </Suspense>;
-  if (rearScreen)return <><Suspense fallback={<div className="boot"><Brand/></div>}><RearScreen auth={auth} roomId={roomId} paired={screenPaired} onPairState={setScreenPaired} onAuth={setAuth} onDisconnect={disconnectRearRemote} serverError={fatal}/></Suspense>{playerView}{stremioPicker}</>;
+  if (rearScreen)return <><Suspense fallback={<div className="boot"><Brand/></div>}><RearScreen auth={auth} roomId={roomId} paired={screenPaired} onPairState={setScreenPaired} onAuth={setAuth} onDisconnect={disconnectRearRemote} serverError={fatal}/></Suspense>{playerView}</>;
   if (fatal)
     return (
       <div className="fatal">
@@ -625,7 +619,7 @@ export default function App() {
         }}
       />
     );
-  if(remoteMode)return <><Remote hideYouTubeShorts={hideYouTubeShorts} key={auth.activeProfileId} auth={auth} onAuth={setAuth} onExit={exitRemote} onSessionLost={reloadAuth} room={activeRemoteRoom} setRoom={setControllerRoom} connections={connections} library={rawLibrary} onOpen={open} onFavorite={favorite} onStar={star} onAddQueue={item=>updateQueue('add',item)} onClearQueue={()=>updateQueue('clear')} onRemoveQueue={item=>updateQueue('remove',item)} onReloadLibrary={loadLibrary}/>{stremioPicker}{toast&&<div className="toast" role="status">{toast}</div>}</>;
+  if(remoteMode)return <><Remote hideYouTubeShorts={hideYouTubeShorts} key={auth.activeProfileId} auth={auth} onAuth={setAuth} onExit={exitRemote} onSessionLost={reloadAuth} room={activeRemoteRoom} setRoom={setControllerRoom} connections={connections} library={rawLibrary} onOpen={open} onFavorite={favorite} onStar={star} onAddQueue={item=>updateQueue('add',item)} onClearQueue={()=>updateQueue('clear')} onRemoveQueue={item=>updateQueue('remove',item)} onReloadLibrary={loadLibrary}/>{toast&&<div className="toast" role="status">{toast}</div>}</>;
   return (
     <MediaDetailsContext.Provider value={{onDetails:inspect,onPlay:open}}><div className="app-shell" data-navigation-overlay={view === "home" && !searchOpen && !controllerRoom}>
       {controllerRoom&&<div className="remote-casting-bar" role="status"><Smartphone size={16}/><span>Select a video to play on your paired screen</span><button className="text-button" onClick={()=>navigate('remote')}>Controls</button><button className="text-button" onClick={()=>setControllerRoom('')}>Disconnect</button></div>}
@@ -690,14 +684,12 @@ export default function App() {
                 <p>A few things to look forward to.</p>
               </div>
               <span className="count-pill">
-                {new Set([...library.favorites,...(library.plexWatchlist||[])].map(itemKey)).size} titles
+                {library.favorites.length} titles
               </span>
             </div>
-            {library.plexNotes?.map(note=><p className="form-help" role="status" key={note}>{note}</p>)}
-            {!!library.plexWatchlist?.length&&<section className="plex-watchlist"><h2>Plex Watchlist</h2>{cards(filter(library.plexWatchlist))}</section>}
             {library.favorites.length ? (
               cards(filter(library.favorites))
-            ) : library.plexWatchlist?.length ? <p className="form-help">Use the plus on a title to save it to your TesPlay list.</p> : (
+            ) : (
               <Empty
                 title="Your next favorites live here"
                 action={
@@ -731,8 +723,6 @@ export default function App() {
                 {historyTotal} {historyTotal === 1 ? "title" : "titles"}
               </span>
             </div>
-            {library.plexNotes?.map(note=><p className="form-help" role="status" key={note}>{note}</p>)}
-            <button className="text-button" onClick={()=>void loadLibrary().catch(e=>showToast(errorMessage(e)))}><RefreshCw size={16}/>Refresh Plex history and progress</button>
             {historyTotal ? (
               <div className="catalog-grid" id="watch-history-grid">
                 {library.progress.slice(0, historyLimit).map((entry) => (
@@ -802,7 +792,7 @@ export default function App() {
               onConnect={() => connect(connections.some(c => c.type === "youtube") ? undefined : "youtube")} initialConnectionId={selectedConnection?.type === "youtube" ? selectedConnection.id : undefined} initialChannel={youtubeChannel} onStar={star} onClearQueue={()=>void updateQueue("clear").catch(e=>showToast(errorMessage(e)))} onRemoveQueue={item=>void updateQueue("remove",item).catch(e=>showToast(errorMessage(e)))} />
           </Suspense>
         )}
-        {view === "settings" && <Suspense fallback={<Busy label="Loading settings…"/>}><SettingsDashboard preferencesReady={preferencesReady} onHideYouTubeShorts={updateYouTubeShorts} onReloadPreferences={reloadPreferences} auth={auth} connections={connections} preferences={preferences} preferencesBusy={preferencesBusy} profileBusy={profileBusy} onAutoplay={updateAutoplay} onCarMode={updateCarMode} onRemovedCurrent={reloadAuth} onReloadConnections={refreshManagedConnections} onBrowse={browse} onManageProfiles={()=>setProfileOpen(true)} onSwitchProfile={async id=>{
+        {view === "settings" && <Suspense fallback={<Busy label="Loading settings…"/>}><SettingsDashboard preferencesReady={preferencesReady} onHideYouTubeShorts={updateYouTubeShorts} onReloadPreferences={reloadPreferences} auth={auth} connections={allConnections} preferences={preferences} preferencesBusy={preferencesBusy} profileBusy={profileBusy} onAutoplay={updateAutoplay} onCarMode={updateCarMode} onRemovedCurrent={reloadAuth} onReloadConnections={refreshManagedConnections} onBrowse={browse} onManageProfiles={()=>setProfileOpen(true)} onSwitchProfile={async id=>{
           setProfileBusy(true);try{await api(`/profiles/${id}/select`,{});await reloadAuth();setPlayer(null);}catch(e){showToast(errorMessage(e));}finally{setProfileBusy(false);}
         }} phone={phone} onFullscreen={openFullscreen} onRemote={()=>navigate('remote')} onPairPhone={pairPhone} onHistory={()=>navigate('history')} onSignOut={async()=>{await api('/auth/logout',{});setPlayer(null);setRoomId('');setControllerRoom('');closePlaybackAudio();await reloadAuth();setView('home');}} onToast={showToast} initialConnection={initialConnection} onInitialUsed={()=>setInitialConnection(undefined)}/></Suspense>}
         </div>
@@ -843,8 +833,7 @@ export default function App() {
           </button>
         </div>
       )}
-      {stremioPicker}
-      {details&&<Suspense fallback={<Busy label="Opening title details"/>}><MediaDetails key={itemKey(details)} item={details} saved={favorites.has(itemKey(details))} isPlex={connections.some(c=>c.id===details.connectionId&&c.type==='plex')} onClose={()=>setDetails(null)} onFavorite={favorite} onPlay={(item,settings)=>{open(item,settings);setDetails(null);}}/></Suspense>}
+      {details&&<Suspense fallback={<Busy label="Opening title details"/>}><MediaDetails key={itemKey(details)} item={details} saved={favorites.has(itemKey(details))} onClose={()=>setDetails(null)} onFavorite={favorite} onPlay={(item,settings)=>{open(item,settings);setDetails(null);}}/></Suspense>}
       {playerView}
       {pairOpen && (
         <PairRemote onClose={() => setPairOpen(false)} onReady={setRoomId} />
@@ -920,10 +909,6 @@ export default function App() {
               Add
             </button>
           </form>
-          <p className="form-help">
-            Plex Home profiles can be selected from the people icon next to your
-            Plex connection.
-          </p>
         </Modal>
       )}
       {epgItem && (

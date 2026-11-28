@@ -13,7 +13,7 @@ import {
   Radio,
   Info,
 } from "lucide-react";
-import { allServices } from "./catalog";
+import { services } from "./catalog";
 import { RefreshCw } from "lucide-react";
 import type { MediaItem } from "./types";
 export const isYouTubeItem = (item: MediaItem) => item.providerType === "youtube" || item.source === "YouTube";
@@ -34,14 +34,14 @@ export function YouTubeLogo({className = ""}: {className?: string}) {
   return <svg className={`youtube-logo ${className}`} viewBox="0 0 32 23" aria-hidden="true"><path fill="#ff4545" d="M31.3 3.6A4 4 0 0 0 28.5.8C26 0 16 0 16 0S6 0 3.5.8A4 4 0 0 0 .7 3.6C0 6.1 0 11.5 0 11.5s0 5.4.7 7.9a4 4 0 0 0 2.8 2.8C6 23 16 23 16 23s10 0 12.5-.8a4 4 0 0 0 2.8-2.8c.7-2.5.7-7.9.7-7.9s0-5.4-.7-7.9Z"/><path fill="white" d="m12.8 16.4 8.3-4.9-8.3-4.9Z"/></svg>;
 }
 export function ConnectorLogo({type}: {type:string}) {
-  const service = allServices.find(s => s.id === (type==='m3u'?'xtream':type));
+  const service = services.find(s => s.id === (type==='m3u'?'xtream':type));
   return <span className={`service-logo ${service?.id || type}`} style={{color:service?.color}}>{type==='youtube'?<YouTubeLogo/>:service?.letters || type.slice(0,1).toUpperCase()}</span>;
 }
 export function RefreshButton({onRefresh, disabled=false, label='Refresh content'}: {onRefresh:()=>void;disabled?:boolean;label?:string}) {
   const [confirm,setConfirm]=useState(false);
   return <><button type="button" className="icon-button" aria-label={label} disabled={disabled} onClick={()=>setConfirm(true)}><RefreshCw size={18}/></button>{confirm&&<Modal title="Refresh your content?" onClose={()=>setConfirm(false)}><p>Are you sure? Refreshing your connected libraries may take a while.</p><div className="form-actions"><button className="button primary" onClick={()=>{setConfirm(false);onRefresh();}}>Refresh content</button><button className="button ghost" onClick={()=>setConfirm(false)}>Cancel</button></div></Modal>}</>;
 }
-export const cardFormat = (item: MediaItem) => item.artwork || (item.type==='live'||item.type==='audio' ? 'logo' : ['movie','series'].includes(item.type) || item.providerType==='plex' && item.contentKind==='series' ? 'poster' : 'thumbnail');
+export const cardFormat = (item: MediaItem) => item.artwork || (item.type==='live'||item.type==='audio' ? 'logo' : ['movie','series'].includes(item.type) ? 'poster' : 'thumbnail');
 export function Busy({ label = "Loading your library" }: { label?: string }) {
   return (
     <div className="busy" role="status">
@@ -203,7 +203,7 @@ export function Card({
           <h3>{hasDetails?<button className="card-title-button" onClick={()=>details?.onDetails(item)}>{item.title}</button>:item.title}</h3>
           <p>
             {[
-              item.unavailable ? "Not in this Plex server" : item.year,
+              item.unavailable ? "No longer available" : item.year,
               item.categoryLabel ||
                 item.category ||
                 (item.type === "folder"

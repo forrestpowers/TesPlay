@@ -186,12 +186,11 @@ export async function createApp(options = {}) {
   app.use("/api", requireAuth);
   app.use('/api',(req,_res,next)=>{
     if (req.session.scope !== 'remote') return next();
-    const allowedGet = req.method === 'GET' && (['/connections','/catalog','/episodes','/playback/options','/library/state','/settings','/player/preferences'].includes(req.path) || /^\/media\//.test(req.path) || /^\/plex\/[^/]+\/(sections|hubs|list|continuity)$/.test(req.path) || /^\/stremio\/[^/]+\/catalogs$/.test(req.path) || /^\/youtube\/[^/]+\/(feed|subscriptions|playlists|search|channel\/[^/]+\/videos|playlist\/[^/]+\/videos)$/.test(req.path));
+    const allowedGet = req.method === 'GET' && (['/connections','/catalog','/episodes','/playback/options','/library/state','/settings','/player/preferences'].includes(req.path) || /^\/media\//.test(req.path) || /^\/youtube\/[^/]+\/(feed|subscriptions|playlists|search|channel\/[^/]+\/videos|playlist\/[^/]+\/videos)$/.test(req.path));
     const allowedPost = req.method === 'POST' && ['/auth/logout','/library/favorites','/library/stars','/library/queue'].includes(req.path);
     return allowedGet || allowedPost ? next() : next(httpError(403,'This browser is authorized as a remote only.'));
   });
   app.get(["/api/media/:token", "/api/v1/media/:token"], ctx.media.handler);
-  app.post('/api/media/:token/heartbeat', ctx.media.heartbeatHandler);
   app.delete(["/api/media/:token", "/api/v1/media/:token"], ctx.media.releaseHandler);
   // Registrars share the gates above; keep authentication and remote scope
   // checks ahead of every account, profile, library and connection route.
@@ -204,23 +203,16 @@ export async function createApp(options = {}) {
   registerAccountRoutes(app, { store, requireOwner, qrAuth });
   // Provider authorization/settings belong to each connection's owner. Token refreshes inside
   // authenticated browsing still update the original encrypted connector.
-  app.use('/api/plex',(req,res,next)=>{
-    const pathname=req.originalUrl.split('?')[0];
-    if(req.method!=='GET' || !/\/(sections|hubs|list|watchlist|continuity)$/.test(pathname)) return requireConnectionManager(req,res,next);
-    next();
-  });
   const requireManagedConnection = (req,_res,next) => {
     try { ctx.getManagedConnection(req,req.params.connectionId || req.params.id); next(); }
     catch(error) { next(error); }
   };
-  app.use(['/api/plex/:connectionId/servers','/api/plex/:connectionId/server','/api/plex/:connectionId/profiles','/api/plex/:connectionId/profile'],requireManagedConnection);
-  app.use(['/api/drive/auth','/api/drive/callback','/api/youtube/auth','/api/youtube/callback'],requireConnectionManager);
+  app.use(['/api/youtube/auth','/api/youtube/callback'],requireConnectionManager);
   app.use(['/api/youtube/:connectionId/signin','/api/youtube/:connectionId/signout'],requireConnectionManager);
   app.post('/api/connections/:id/test',requireConnectionManager,requireManagedConnection,(req,res,next)=>next());
   app.get('/api/connections/:id/categories',requireConnectionManager,requireManagedConnection,(req,res,next)=>next());
   app.post('/api/connections/categories/preview',requireConnectionManager,(req,res,next)=>next());
-  app.use(['/api/radio','/api/youtube/resolve'],requireConnectionManager);
-  app.get('/api/connection-capabilities',(req,res)=>res.json({googleConfigured:Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),googleTvConfigured:Boolean(process.env.GOOGLE_TV_CLIENT_ID && process.env.GOOGLE_TV_CLIENT_SECRET),canUseLocal:req.user.role==='owner'}));
+  app.use('/api/youtube/resolve',requireConnectionManager);
   function settings(req) {
     return {
       serverName: process.env.SERVER_NAME || "TesPlay",

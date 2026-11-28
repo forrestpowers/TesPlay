@@ -20,7 +20,7 @@ export function createGoogleAuth({ fetchData, saveConfig, getConnection }) {
       return c.config.accessToken;
     if (!c.config.refreshToken)
       throw providerError(
-        `Authorize ${c.type === "youtube" ? "YouTube" : "Google Drive"} before browsing.`,
+        "Authorize YouTube before browsing.",
       );
     const key = `${c.id}:${createHash("sha256").update(JSON.stringify(c.config)).digest("hex")}`;
     let flight = googleRefreshes.get(key);
@@ -42,7 +42,7 @@ export function createGoogleAuth({ fetchData, saveConfig, getConnection }) {
           });
         } catch (error) {
           if (error?.oauthCode === 'invalid_grant') throw providerError(
-            `Google authorization for ${c.type === 'youtube' ? 'YouTube' : 'Drive'} has expired or was revoked. Open Connections and reconnect your Google account.`, 409,
+            'Google authorization for YouTube has expired or was revoked. Open Connections and reconnect your Google account.', 409,
           );
           if (error?.oauthCode === 'invalid_client') throw providerError(
             'Google rejected the OAuth client settings. Check the client ID and secret in Connections, then reconnect Google.', 409,
@@ -69,7 +69,7 @@ export function createGoogleAuth({ fetchData, saveConfig, getConnection }) {
     }
   }
   function registerRoutes(app, { connection, route }) {
-    for (const type of ["drive", "youtube"]) {
+    for (const type of ["youtube"]) {
       app.get(
         `/api/${type}/auth`,
         route(async (req, res) => {
@@ -89,7 +89,7 @@ export function createGoogleAuth({ fetchData, saveConfig, getConnection }) {
           const base = process.env.PUBLIC_URL;
           if (!base)
             throw providerError(
-              `Set PUBLIC_URL to your HTTPS address before connecting ${type === "drive" ? "Google Drive" : "YouTube"}.`,
+              "Set PUBLIC_URL to your HTTPS address before connecting YouTube.",
             );
           const redirectUri = new URL(`/api/${type}/callback`, base).toString();
           const state = randomBytes(32).toString("base64url");
@@ -109,7 +109,7 @@ export function createGoogleAuth({ fetchData, saveConfig, getConnection }) {
             client_id: c.config.clientId,
             redirect_uri: redirectUri,
             response_type: "code",
-            scope: `https://www.googleapis.com/auth/${type === "drive" ? "drive.readonly" : "youtube.readonly"}`,
+            scope: "https://www.googleapis.com/auth/youtube.readonly",
             access_type: "offline",
             prompt: "consent",
             state,
@@ -161,7 +161,7 @@ export function createGoogleAuth({ fetchData, saveConfig, getConnection }) {
           );
           if (!tokens.access_token)
             throw providerError("Google did not return an access token.", 502);
-          const requiredScope = `https://www.googleapis.com/auth/${type === "drive" ? "drive.readonly" : "youtube.readonly"}`;
+          const requiredScope = "https://www.googleapis.com/auth/youtube.readonly";
           if (
             tokens.scope &&
             !tokens.scope.split(/\s+/).includes(requiredScope)
@@ -171,7 +171,7 @@ export function createGoogleAuth({ fetchData, saveConfig, getConnection }) {
               403,
             );
           saveConfig(req, c, {
-            ...(type === "youtube" ? { authMode: "oauth" } : {}),
+            authMode: "oauth",
             ...tokenConfig(c, tokens),
           });
           res.redirect(`/?connected=${type}`);

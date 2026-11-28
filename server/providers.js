@@ -1,50 +1,28 @@
 import { plainText, mediaDate } from "./text.js";
-import { registerStremioRoutes } from './stremio.js';
 import { createYouTubeResolver } from "./youtube.js";
 import { registerYouTubeBrowser } from "./youtube-browser.js";
 import { createInnertubeService, registerInnertubeRoutes, youtubeHeight, YOUTUBE_HEIGHTS } from "./youtube-innertube.js";
 import { createSabrBridge } from "./youtube-sabr.js";
-import { registerPlexLibrary } from "./plex-library.js";
 import { createProviderCache } from "./provider-cache.js";
 import { categoryLoaded } from './iptv-selection.js';
 import { validateConnection } from './connection-routes.js';
 import { createGoogleAuth } from "./google-auth.js";
 import { rateLimit } from "express-rate-limit";
-import { randomBytes, createHash } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
-import { XMLParser } from "fast-xml-parser";
 import {
   createMediaService,
   remoteData,
   validateRemoteUrl,
-  containedPath,
-  mediaTypes,
   providerError,
 } from "./media.js";
 
-const xml = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "",
-  processEntities: false,
-});
 const array = (value) =>
   value == null ? [] : Array.isArray(value) ? value : [value];
-const idPattern = /^[A-Za-z0-9_-]{1,200}$/;
 const numeric = (input) => {
   if (!/^\d{1,20}$/.test(String(input)))
     throw providerError("Invalid media identifier.");
   return String(input);
-};
-const opaque = (text) => Buffer.from(text).toString("base64url");
-const decode = (text) => {
-  if (
-    typeof text !== "string" ||
-    text.length > 5000 ||
-    !/^[A-Za-z0-9_-]*$/.test(text)
-  )
-    throw providerError("Invalid media identifier.");
-  return Buffer.from(text, "base64url").toString("utf8");
 };
 const cleanText = plainText;
 const privateHosts = (url) => [
@@ -195,10 +173,8 @@ export function parseXtreamEpisodes(data, connectionId) {
 export function registerProviderRoutes(app, ctx, dependencies = {}) {
   const fetchData = dependencies.remoteData || remoteData;
   const media = ctx.media || createMediaService(ctx);
-  registerStremioRoutes(app, { ...ctx, media }, dependencies);
   const resolveYouTube = dependencies.resolveYouTube || createYouTubeResolver();
   const { cached, cacheKey, catalogCached } = createProviderCache(ctx);
-  const pins = new Map();
   const route = (fn) => (req, res, next) =>
     Promise.resolve(fn(req, res)).catch(next);
   const connection = (req, id, type) => {
@@ -312,87 +288,8 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       }));
     }))).flat();
   }
-  const plexHeaders = (c, token) => ({
-    Accept: "application/json",
-    "X-Plex-Product": "TesPlay",
-    "X-Plex-Version": "0.1.0",
-    "X-Plex-Client-Identifier":
-      c?.config?.clientIdentifier || `aperture-${c?.id || "pairing"}`,
-    ...(token ? { "X-Plex-Token": token } : {}),
-  });
-  function plexToken(req, c) {
-    const profile = c.config.profileTokens?.[ctx.getProfileId(req)];
-    if (profile?.token) return profile.token;
-    if (
-      c.config.ownerProfileId &&
-      c.config.ownerProfileId !== ctx.getProfileId(req) && !c.shared
-    )
-      throw providerError(
-        "Choose a Plex Home profile for this TesPlay profile first.",
-      );
-    if (!c.config.token) throw providerError("Sign in to Plex first.");
-    return c.config.token;
-  }
-  async function plexRequest(c, pathname, token, options = {}) {
-    const url = pathname.startsWith("https://plex.tv/")
-      ? new URL(pathname)
-      : new URL(pathname, c.config.url);
-    const body = await fetchData(url, {
-      text: true,
-      headers: plexHeaders(c, token),
-      allowedPrivateHosts: privateHosts(url),
-      ...options,
-    });
-    if (!body) return {};
-    try {
-      return JSON.parse(body);
-    } catch {
-      try {
-        return xml.parse(body);
-      } catch {
-        throw providerError("Plex returned an invalid response.", 502);
-      }
-    }
-  }
-  async function plexResources(c, token) {
-    const data = await plexRequest(
-      c,
-      "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1",
-      token,
-    );
-    return array(data)
-      .filter((s) => String(s.provides).split(",").includes("server"))
-      .map((s) => ({
-        ...s,
-        connections: array(s.connections)
-          .filter((x) => {
-            try {
-              validateRemoteUrl(x.uri);
-              return true;
-            } catch {
-              return false;
-            }
-          })
-          .sort(
-            (a, b) =>
-              Number(b.local) - Number(a.local) ||
-              Number(a.relay) - Number(b.relay) ||
-              Number(b.protocol === "https") - Number(a.protocol === "https"),
-          ),
-      }));
-  }
-  const publicServers = (servers) =>
-    servers.flatMap((s) =>
-      s.connections.map((x) => ({
-        id: s.clientIdentifier,
-        name: s.name,
-        url: x.uri,
-        local: !!x.local,
-      })),
-    );
   const googleAuth = createGoogleAuth({ fetchData, saveConfig, getConnection: (req, id) => ctx.getConnection(req, id) });
   const googleToken = googleAuth.token;
-  const driveToken = googleToken;
   async function youtubeRequest(req, c, pathname, params) {
     const u = new URL(`https://www.googleapis.com/youtube/v3/${pathname}`);
     const oauth =
@@ -436,7 +333,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     if(!x) throw providerError('This title is not available.',404);
     const value={type:kind,category:`${kind}:${x.category_id??''}`};ensure(req,c,value);return value;
   }
-  const plexAccess = x => ({type:['show','season','episode'].includes(x.type)?'series':['track','album','artist'].includes(x.type)?'audio':'movie',sectionId:String(x.librarySectionID||'')});
   async function xtreamEpisodes(req, c, seriesId, force = false) {
     const access=await ensureXtream(req,c,"series",seriesId);
     const data = await catalogCached(
@@ -452,136 +348,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       }),
     );
   }
-  function plexItem(req, c, x, token, root = false) {
-    const poster = x.type === "episode" ? x.grandparentThumb || x.parentThumb || x.thumb : x.thumb;
-    const folder =
-      root ||
-      ["show", "season", "artist", "album"].includes(x.type) ||
-      (x.childCount != null && !x.Media);
-    const key = root
-      ? `/library/sections/${numeric(x.key)}/all`
-      : folder
-        ? `/library/metadata/${numeric(x.ratingKey)}/children`
-        : numeric(x.ratingKey);
-    return itemBase(c, {
-      id: folder ? opaque(key) : key,
-      title: cleanText(x.title),
-      contentKind: root ? ({show:"series",movie:"movie",artist:"audio"}[x.type]||"movie") : plexAccess(x).type,
-      sectionId: String(root ? x.key : x.librarySectionID || ""),
-      artwork: root || ["artist","album","track"].includes(x.type) ? "logo" : "poster",
-      resumeSeconds: Math.max(0, Number(x.viewOffset || 0) / 1000),
-      watched: ["show","season"].includes(x.type) ? Number(x.leafCount)>0 && Number(x.viewedLeafCount)>=Number(x.leafCount) : Number(x.viewCount||0)>0,
-      type: root ? "folder" : x.type === "show" ? "series" : folder
-        ? "folder"
-        : x.type === "track"
-          ? "audio"
-          : x.type === "episode"
-            ? "episode"
-            : "movie",
-      poster: art(
-        req,
-        c,
-        poster ? new URL(poster, c.config.url).toString() : null,
-        plexHeaders(c, token),
-      ),
-      backdrop: art(
-        req,
-        c,
-        x.art ? new URL(x.art, c.config.url).toString() : null,
-        plexHeaders(c, token),
-      ),
-      description: cleanText(x.summary),
-      year: String(x.year || ""),
-      duration: Number(x.duration) / 1000 || undefined,
-      addedAt: mediaDate(x.addedAt),
-      subtitle: cleanText(x.grandparentTitle),
-      ...(x.type === "season" ? {seriesId:String(x.parentRatingKey || '')} : {}),
-      ...(x.type === "episode"
-        ? {
-            seriesId: x.grandparentRatingKey
-              ? String(x.grandparentRatingKey)
-              : undefined,
-            seasonNumber: episodeNumber(x.parentIndex, 0),
-            episodeNumber: episodeNumber(x.index, 0),
-          }
-        : {}),
-    });
-  }
-  async function plexSeriesEpisodes(req, c, seriesId, token, sectionId = '') {
-    const items = new Map();
-    const size = 200;
-    // Traverse server pagination, independently of the currently visible catalog page.
-    for (let page = 0; page < 100; page++) {
-      const container =
-        (
-          await plexRequest(
-            c,
-            `/library/metadata/${numeric(seriesId)}/allLeaves?X-Plex-Container-Start=${page * size}&X-Plex-Container-Size=${size}`,
-            token,
-          )
-        ).MediaContainer || {};
-      const entries = array(container.Metadata || container.Video);
-      const before = items.size;
-      for (const entry of entries) {
-        if (entry.type !== "episode") continue;
-        const item = plexItem(
-          req,
-          c,
-          { ...entry, grandparentRatingKey: seriesId, librarySectionID:entry.librarySectionID || container.librarySectionID || sectionId },
-          token,
-        );
-        items.set(item.id, item);
-      }
-      const total = Number(container.totalSize);
-      if (
-        Number.isFinite(total)
-          ? page * size + entries.length >= total
-          : entries.length < size
-      )
-        return [...items.values()].sort(episodeOrder);
-      if (!entries.length || items.size === before)
-        throw providerError(
-          "Plex did not return the remaining episodes. Try again later.",
-          502,
-        );
-    }
-    throw providerError(
-      "This Plex series is too large to determine the next episode safely.",
-      502,
-    );
-  }
-  async function driveFile(c, id, token) {
-    if (!idPattern.test(id)) throw providerError("Invalid Drive identifier.");
-    const u = new URL(`https://www.googleapis.com/drive/v3/files/${id}`);
-    u.search = new URLSearchParams({
-      fields:
-        "id,name,mimeType,parents,thumbnailLink,capabilities(canDownload)",
-      supportsAllDrives: "true",
-    });
-    return fetchData(u, { headers: { Authorization: `Bearer ${token}` } });
-  }
-  async function checkDriveRoot(c, id, token) {
-    if (!c.config.folderId || id === c.config.folderId) return;
-    let ancestors = [id];
-    const seen = new Set();
-    for (let depth = 0; ancestors.length && depth < 40; depth++) {
-      const next = [];
-      for (const candidate of ancestors.slice(0, 10)) {
-        if (seen.has(candidate)) continue;
-        seen.add(candidate);
-        const f = await driveFile(c, candidate, token);
-        if (array(f.parents).includes(c.config.folderId)) return;
-        next.push(...array(f.parents));
-      }
-      ancestors = next;
-    }
-    throw providerError(
-      "This Drive item is outside the configured folder.",
-      403,
-    );
-  }
-
-  registerPlexLibrary(app,{ctx,connection,request:plexRequest,token:plexToken,item:plexItem,route,art});
   const youtubeSignInLimit = rateLimit({ windowMs: 60000, limit: 6, keyGenerator: (req) => req.user.id, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many Google sign-in attempts. Try again in a minute." } });
   if (innertube) registerInnertubeRoutes(app, { connection, route, art, service: innertube, limiter: youtubeSignInLimit });
   registerYouTubeBrowser(app, { connection, request: youtubeRequest, route, art, cached, cacheKey,
@@ -590,7 +356,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
   });
   if (!ctx.media) {
     app.get(["/api/media/:token", "/api/v1/media/:token"], media.handler);
-    app.post('/api/media/:token/heartbeat', media.heartbeatHandler);
     app.delete(["/api/media/:token", "/api/v1/media/:token"], media.releaseHandler);
   }
   async function youtubePlayback(req, videoId, c = null) {
@@ -653,18 +418,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           throw providerError(
             "The playlist contains no supported HTTP streams.",
           );
-      } else if (c.type === "plex")
-        await plexRequest(c, "/library/sections", plexToken(req, c));
-      else if (c.type === "drive")
-        await driveFile(
-          c,
-          c.config.folderId || "root",
-          await driveToken(req, c),
-        );
-      else if (c.type === "local") {
-        const dir = await containedPath(c.config.rootPath);
-        if (!(await stat(dir)).isDirectory())
-          throw providerError("Choose a folder, not a file.");
       } else if (c.type === "youtube" && innertube?.mode(c)) {
         await innertube.test(req, c);
       } else if (c.type === "youtube") {
@@ -834,186 +587,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           ].map((x) => ({ id: x, name: x === '__ungrouped__' ? 'Uncategorized' : x })),
         });
       }
-      if (c.type === "plex") {
-        const token = plexToken(req, c);
-        let pathname;
-        if (!parent) pathname = "/library/sections";
-        else {
-          const decoded = decode(parent);
-          if (
-            !/^\/library\/(?:sections\/\d+\/all|metadata\/\d+\/children)$/.test(
-              decoded,
-            )
-          )
-            throw providerError("Invalid Plex folder.");
-          pathname = decoded;
-        }
-        let sectionId='', contentKind='movie';
-        sectionId=/^\/library\/sections\/(\d+)/.exec(pathname)?.[1] || '';
-        if(parent && c.access) {
-          const section=/^\/library\/sections\/(\d+)/.exec(pathname);
-          if(section) {
-            sectionId=section[1];
-            const roots=(await plexRequest(c,'/library/sections',token)).MediaContainer||{};
-            const root=array(roots.Directory).find(x=>String(x.key)===sectionId);
-            if(!root) throw providerError('Plex library not found.',404);
-            contentKind=plexAccess(root).type;
-          } else {
-            const id=/^\/library\/metadata\/(\d+)/.exec(pathname)?.[1];
-            const metadata=(await plexRequest(c,`/library/metadata/${id}`,token)).MediaContainer||{};
-            const current=array(metadata.Metadata||metadata.Directory)[0];
-            if(!current) throw providerError('Plex folder not found.',404);
-            ({sectionId,type:contentKind}=plexAccess(current));
-          }
-          ensure(req,c,{type:contentKind,sectionId});
-        }
-        const u = new URL(pathname, c.config.url);
-        u.searchParams.set(
-          "X-Plex-Container-Start",
-          String((p.page - 1) * p.limit),
-        );
-        u.searchParams.set("X-Plex-Container-Size", String(p.limit));
-        if (p.q && parent) u.searchParams.set("title", p.q);
-        if(kind==="episode" && parent && /^\/library\/sections\//.test(pathname)) u.searchParams.set("type","4");
-        if(req.query.sort === "recent" && parent && /^\/library\/sections\//.test(pathname)) {
-          u.searchParams.set("sort","addedAt:desc");
-          if(kind === "episode")u.searchParams.set("type","4");
-        }
-        const container =
-          (await plexRequest(c, u.pathname + u.search, token)).MediaContainer ||
-          {};
-        const entries = [
-          ...array(container.Directory),
-          ...array(container.Metadata),
-          ...array(container.Video),
-          ...array(container.Track),
-        ];
-        const items = entries
-          .filter(x=>parent || permitted(req,c,{...plexAccess(x),sectionId:String(x.key)}))
-          .map((x) => plexItem(req, c, {...x,librarySectionID:x.librarySectionID||sectionId}, token, !parent))
-          .filter(
-            (x) =>
-              !p.q ||
-              parent ||
-              x.title.toLowerCase().includes(p.q.toLowerCase()),
-          );
-        return res.json({
-          items: items.slice(0, p.limit),
-          hasMore: Number(container.totalSize || 0) > p.page * p.limit,
-        });
-      }
-      if (c.type === "local") {
-        if(req.query.recursive==='1' && p.q) {
-          const matches=[];const pending=[''];let scanned=0;
-          while(pending.length) {
-            if(req.res.destroyed)return;
-            const relative=pending.shift();const dir=await containedPath(c.config.rootPath,relative);
-            for(const entry of await readdir(dir,{withFileTypes:true})) {
-              if(entry.name.startsWith('.') || entry.isSymbolicLink())continue;
-              if(++scanned>100000)throw providerError('This library is too large to search at once. Search within a folder.',422);
-              const name=path.join(relative,entry.name);
-              if(entry.isDirectory()){pending.push(name);continue;}
-              const mime=mediaTypes[path.extname(entry.name).toLowerCase()];
-              if(!entry.isFile() || !mime || /\.(srt|vtt)$/i.test(entry.name) || !entry.name.toLowerCase().includes(p.q.toLowerCase()))continue;
-              const item=itemBase(c,{id:opaque(name),title:entry.name,type:mime.startsWith('audio')?'audio':'video'});
-              if(permitted(req,c,item))matches.push(item);
-            }
-          }
-          return res.json(paginate(matches,req.query));
-        }
-        const relative = parent ? decode(parent) : "";
-        const dir = await containedPath(c.config.rootPath, relative);
-        const entries = await readdir(dir, { withFileTypes: true });
-        const items = entries
-          .filter(
-            (x) =>
-              !x.name.startsWith(".") &&
-              (x.isDirectory() ||
-                (x.isFile() &&
-                  mediaTypes[path.extname(x.name).toLowerCase()] &&
-                  !/\.(srt|vtt)$/i.test(x.name))),
-          )
-          .map((x) =>
-            itemBase(c, {
-              id: opaque(path.join(relative, x.name)),
-              title: x.name,
-              addedAt: x.createdTime,
-              type: x.isDirectory()
-                ? "folder"
-                : mediaTypes[path.extname(x.name).toLowerCase()].startsWith(
-                      "audio",
-                    )
-                  ? "audio"
-                  : "video",
-            }),
-          )
-          .sort(
-            (a, b) =>
-              Number(b.type === "folder") - Number(a.type === "folder") ||
-              a.title.localeCompare(b.title),
-          );
-        if(req.query.sort === "recent") await Promise.all(items.filter(i=>i.type!=="folder").map(async item=>{item.addedAt=(await stat(await containedPath(c.config.rootPath,decode(item.id)))).mtime.toISOString();}));
-        return res.json(paginate(items.filter(i=>permitted(req,c,i)), req.query));
-      }
-      if (c.type === "drive") {
-        const token = await driveToken(req, c);
-        const folder = parent || c.config.folderId || "root";
-        if (!idPattern.test(folder))
-          throw providerError("Invalid Drive folder.");
-        await checkDriveRoot(c, folder, token);
-        const query = [
-          ...(req.query.recursive==='1'&&p.q?[]:[`'${folder}' in parents`]),
-          "trashed = false",
-          "(mimeType contains 'video/' or mimeType contains 'audio/' or mimeType = 'application/vnd.google-apps.folder')",
-        ];
-        if (p.q)
-          query.push(
-            `name contains '${p.q.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`,
-          );
-        const u = new URL("https://www.googleapis.com/drive/v3/files");
-        u.search = new URLSearchParams({
-          q: query.join(" and "),
-          pageSize: String(p.limit),
-          fields:
-            "nextPageToken,files(id,name,mimeType,thumbnailLink,videoMediaMetadata,createdTime)",
-          orderBy: req.query.sort === "recent" ? "createdTime desc" : "folder,name",
-          supportsAllDrives: "true",
-          includeItemsFromAllDrives: "true",
-          ...(req.query.pageToken
-            ? { pageToken: String(req.query.pageToken) }
-            : {}),
-        });
-        const data = await fetchData(u, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if(req.query.recursive==='1'&&p.q&&c.config.folderId) {
-          const permittedFiles=await Promise.all(array(data.files).map(async file=>{try{await checkDriveRoot(c,file.id,token);return file;}catch(error){if(error.status===403)return null;throw error;}}));
-          data.files=permittedFiles.filter(Boolean);
-        }
-        return res.json({
-          items: array(data.files).filter(x=>permitted(req,c,{type:x.mimeType==="application/vnd.google-apps.folder"?"folder":x.mimeType.startsWith("audio/")?"audio":"video"})).map((x) =>
-            itemBase(c, {
-              id: x.id,
-              title: x.name,
-              addedAt: x.createdTime,
-              type:
-                x.mimeType === "application/vnd.google-apps.folder"
-                  ? "folder"
-                  : x.mimeType.startsWith("audio/")
-                    ? "audio"
-                    : "video",
-              poster: x.thumbnailLink
-                ? `/api/drive/artwork/${c.id}/${x.id}`
-                : undefined,
-              duration:
-                Number(x.videoMediaMetadata?.durationMillis) / 1000 ||
-                undefined,
-            }),
-          ),
-          hasMore: !!data.nextPageToken,
-          nextPageToken: data.nextPageToken,
-        });
-      }
       if (c.type === "youtube") {
         const data = await youtubeRequest(req, c, "search", {
           part: "snippet",
@@ -1051,25 +624,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       if (!seriesId) throw providerError("Invalid series or episode.");
       return xtreamEpisodes(req, c, seriesId);
     }
-    if (c.type !== "plex") return [];
-    const token = plexToken(req, c);
-    let metadataId = id;
-    if (kind === 'series' || kind === 'folder') {
-      const path = decode(id);
-      metadataId = /^\/library\/metadata\/(\d+)\/children$/.exec(path)?.[1];
-      if (!metadataId) throw providerError("Choose a Plex series.");
-    }
-    const data = (await plexRequest(c, `/library/metadata/${numeric(metadataId)}`, token)).MediaContainer || {};
-    const current = array(data.Metadata || data.Video || data.Directory)[0];
-    if (!current) throw providerError("This series is unavailable.", 404);
-    ensure(req, c, plexAccess(current));
-    let seriesId = current.type === 'show' ? current.ratingKey : current.type === 'season' ? current.parentRatingKey : current.grandparentRatingKey;
-    if (!seriesId && current.type === 'episode' && current.parentRatingKey) {
-      const season = (await plexRequest(c, `/library/metadata/${numeric(current.parentRatingKey)}`, token)).MediaContainer || {};
-      seriesId = array(season.Metadata || season.Directory)[0]?.parentRatingKey;
-    }
-    if (!seriesId) throw providerError("Plex did not identify this episode's series.", 502);
-    return (await plexSeriesEpisodes(req, c, seriesId, token, current.librarySectionID)).filter(item => permitted(req,c,item));
+    return [];
   }
   app.get(['/api/episodes', '/api/episodes/next'], route(async (req, res) => {
     const c = connection(req, req.query.connectionId), id = String(req.query.itemId || '');
@@ -1082,40 +637,11 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     res.json({items, next: index >= 0 ? items[index + 1] || null : null, previous: index > 0 ? items[index - 1] : null});
   }));
 
-  const plexAudio = part => array(part?.Stream).filter(x => Number(x.streamType) === 2 && /^\d{1,20}$/.test(String(x.id))).map(x => ({
-    id: `plex-audio-${numeric(x.id)}`, label: cleanText(x.displayTitle || x.language || x.codec || 'Audio'), language: x.languageCode, codec: x.codec || 'aac', selected: Number(x.selected) === 1,
-  }));
-  const plexSubtitles = part => array(part?.Stream).filter(x => Number(x.streamType) === 3 && /^\/library\/streams\//.test(x.key || '') && ['srt','webvtt','vtt'].includes(x.codec));
-  const plexQualities = [{id:'auto',label:'Auto / original'}, {id:'1080p',label:'1080p · 8 Mbps'}, {id:'720p',label:'720p · 4 Mbps'}, {id:'480p',label:'480p · 2 Mbps'}];
   app.get('/api/playback/options', route(async (req,res) => {
     const c = connection(req, req.query.connectionId), id = String(req.query.itemId || '');
-    if (c.type !== 'plex') {
-      if (c.type === 'xtream') await ensureXtream(req,c,req.query.kind === 'episode' ? 'series' : String(req.query.kind), req.query.kind === 'episode' ? id.split(':')[0] : id);
-      return res.json({audio:[],subtitles:[],qualities:[]});
-    }
-    const data = (await plexRequest(c, `/library/metadata/${numeric(id)}`, plexToken(req,c))).MediaContainer || {};
-    const meta = array(data.Metadata || data.Video || data.Track)[0];
-    if (!meta) throw providerError('This Plex title is unavailable.',404);
-    ensure(req,c,plexAccess(meta));
-    const part = array(array(meta.Media)[0]?.Part)[0];
-    res.json({item:plexItem(req,c,meta,plexToken(req,c)),audio:plexAudio(part),subtitles:plexSubtitles(part).map(x => ({id:`plex-subtitle-${numeric(x.id)}`,label:cleanText(x.displayTitle || x.language || 'Subtitles'),language:x.languageCode})),qualities:meta.type === 'track' ? [] : plexQualities});
+    if (c.type === 'xtream') await ensureXtream(req,c,req.query.kind === 'episode' ? 'series' : String(req.query.kind), req.query.kind === 'episode' ? id.split(':')[0] : id);
+    return res.json({audio:[],subtitles:[],qualities:[]});
   }));
-
-  ctx.syncPlexProgress = async (req, item, seconds, duration, state) => {
-    if (!item.connectionId) return;
-    const c = connection(req, item.connectionId);
-    if (c.type !== 'plex') return;
-    const id = numeric(item.id), token = plexToken(req,c);
-    const data = (await plexRequest(c, `/library/metadata/${id}`, token)).MediaContainer || {};
-    const meta = array(data.Metadata || data.Video || data.Track)[0];
-    if (!meta) throw providerError('This Plex title is unavailable.',404);
-    ensure(req,c,plexAccess(meta));
-    const actualDuration = Math.max(0, Number(meta.duration) || duration * 1000);
-    const position = Math.min(actualDuration || seconds * 1000, Math.round(seconds * 1000));
-    const params = new URLSearchParams({ratingKey:id,key:`/library/metadata/${id}`,state:['playing','paused','stopped'].includes(state)?state:'stopped',time:String(position),duration:String(actualDuration)});
-    await plexRequest(c, `/:/timeline?${params}`, token, {method:'POST',headers:{...plexHeaders(c,token),'X-Plex-Session-Identifier':createHash('sha256').update(`${req.session.id}:${id}`).digest('hex')}});
-    if (actualDuration > 0 && position / actualDuration >= .97 && state === 'stopped') await plexRequest(c, `/:/scrobble?${new URLSearchParams({key:id,identifier:'com.plexapp.plugins.library'})}`, token, {method:'PUT'});
-  };
 
   app.get(
     "/api/playback",
@@ -1235,184 +761,11 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           ...(playlistEntry ? {} : carMode),
         });
       }
-      if (c.type === "local") {
-        const relative = decode(id);
-        const file = await containedPath(c.config.rootPath, relative);
-        const type = mediaTypes[path.extname(file).toLowerCase()];
-        if (
-          !type ||
-          !(await stat(file)).isFile() ||
-          type.startsWith("text/") ||
-          type.includes("subrip")
-        )
-          throw providerError("Unsupported media file.");
-        ensure(req,c,{type:type.startsWith("audio")?"audio":"video"});
-        const subtitles = [];
-        const entries = await readdir(path.dirname(file));
-        const stem = path.basename(file, path.extname(file));
-        for (const name of entries
-          .filter(
-            (x) =>
-              x === `${stem}.vtt` ||
-              (x.startsWith(`${stem}.`) && x.endsWith(".vtt")),
-          )
-          .slice(0, 10))
-          subtitles.push({
-            label: name,
-            url: media.register(req, c, {
-              root: c.config.rootPath,
-              relative: path.join(path.dirname(relative), name),
-            }),
-            language: "en",
-          });
-        return res.json({
-          url: media.register(req, c, { root: c.config.rootPath, relative }),
-          type: type.startsWith("audio") ? "audio" : "video",
-          subtitles,
-        });
-      }
-      if (c.type === "drive") {
-        const token = await driveToken(req, c);
-        await checkDriveRoot(c, id, token);
-        const file = await driveFile(c, id, token);
-        if (
-          !/^(video|audio)\//.test(file.mimeType) ||
-          file.capabilities?.canDownload === false
-        )
-          throw providerError("This Drive file cannot be streamed.");
-        ensure(req,c,{type:file.mimeType.startsWith("audio")?"audio":"video"});
-        return res.json({
-          url: media.register(req, c, {
-            url: `https://www.googleapis.com/drive/v3/files/${id}?alt=media&supportsAllDrives=true`,
-            getHeaders: async (request, current) => ({
-              Authorization: `Bearer ${await driveToken(request, current)}`,
-            }),
-          }),
-          type: file.mimeType.startsWith("audio") ? "audio" : "video",
-        });
-      }
       if (c.type === "youtube") {
         if (!/^[a-zA-Z0-9_-]{11}$/.test(id))
           throw providerError("Invalid YouTube video.");
         ensure(req,c,{type:"video"});
         return res.json(await youtubePlayback(req, id, c));
-      }
-      if (c.type === "plex") {
-        numeric(id);
-        const token = plexToken(req, c);
-        const container =
-          (await plexRequest(c, `/library/metadata/${id}`, token))
-            .MediaContainer || {};
-        const meta = array(
-          container.Metadata || container.Video || container.Track,
-        )[0];
-        if(meta) ensure(req,c,plexAccess(meta));
-        const format = array(meta?.Media)[0];
-        const part = array(format?.Part)[0];
-        if (!part?.key)
-          throw providerError("Plex returned no playable media.", 404);
-        const audioTracks = plexAudio(part);
-        const audioTrackId = req.query.audioTrackId ? String(req.query.audioTrackId) : undefined;
-        if (audioTrackId && !audioTracks.some(x => x.id === audioTrackId)) throw providerError('This audio track is unavailable.');
-        const qualityId = String(req.query.qualityId || 'auto');
-        if (!plexQualities.some(x => x.id === qualityId)) throw providerError('This quality is unavailable.');
-        // Plex owns the selected stream for transcoded output; pin the chosen
-        // audio before asking it to create the HLS session.
-        if (audioTrackId) await plexRequest(c, `/library/parts/${numeric(part.id)}?${new URLSearchParams({audioStreamID:audioTrackId.slice(11),allParts:'0'})}`, token, {method:'PUT'});
-        const quality = {'1080p':['1920x1080',8000], '720p':['1280x720',4000], '480p':['854x480',2000]}[qualityId];
-        const headers = plexHeaders(c, token);
-        const compatible =
-          ["mp4", "m4v", "mkv", "webm", "mp3", "aac", "m4a", "flac", "ogg"].includes(
-            format.container,
-          ) &&
-          (!format.videoCodec ||
-            ["h264", "vp8", "vp9", "av1"].includes(format.videoCodec)) &&
-          (!format.audioCodec ||
-            ["aac", "mp3", "opus", "vorbis", "flac"].includes(
-              format.audioCodec,
-            ));
-        const transcode =
-          req.query.transcode === "1" ||
-          c.config.transcode === true ||
-          !!audioTrackId || !!quality || !compatible;
-        let url, type, plexSessionId;
-        if (transcode) {
-          plexSessionId = randomBytes(12).toString('hex');
-          const u = new URL(
-            "/video/:/transcode/universal/start.m3u8",
-            c.config.url,
-          );
-          u.search = new URLSearchParams({
-            path: `/library/metadata/${id}`,
-            mediaIndex: "0",
-            partIndex: "0",
-            protocol: "hls",
-            directPlay: "0",
-            // Auto can remux an already compatible H.264 video. Explicit
-            // compatibility reencodes both tracks rather than copying codecs.
-            directStream: quality || req.query.transcode === "1" || c.config.transcode === true || format.videoCodec !== "h264" ? "0" : "1",
-            videoCodec: "h264",
-            audioCodec: "aac",
-            maxVideoBitrate: String(
-              Math.min(
-                20000,
-                Math.max(1000, quality?.[1] || Number(c.config.maxBitrate) || 8000),
-              ),
-            ),
-            videoResolution: quality?.[0] || "1920x1080",
-            subtitles: "none",
-            session: plexSessionId,
-            "X-Plex-Platform": "Chrome",
-            "X-Plex-Product": "TesPlay",
-            "X-Plex-Client-Identifier":
-              c.config.clientIdentifier || `aperture-${c.id}`,
-          });
-          url = u.toString();
-          type = "hls";
-        } else {
-          if (!/^\/library\/parts\//.test(part.key))
-            throw providerError("Unexpected Plex media path.");
-          url = new URL(part.key, c.config.url).toString();
-          type = meta.type === "track" ? "audio" : "video";
-        }
-        const subtitles = array(part.Stream)
-          .filter(
-            (x) =>
-              Number(x.streamType) === 3 &&
-              /^\/library\/streams\//.test(x.key || "") &&
-              ["srt", "webvtt", "vtt"].includes(x.codec),
-          )
-          .map((x) => ({
-            ...(/^\d{1,20}$/.test(String(x.id)) ? {id:`plex-subtitle-${x.id}`} : {}),
-            label: x.displayTitle || x.language || "Subtitles",
-            language: x.languageCode || "en",
-            url: media.register(req, c, {
-              url: new URL(x.key, c.config.url).toString(),
-              headers,
-              allowedPrivateHosts: privateHosts(c.config.url),
-              kind: "subtitle",
-            }),
-          }));
-        return res.json({
-          url: media.register(req, c, {
-            url,
-            plexSessionId,
-            headers,
-            allowedPrivateHosts: privateHosts(c.config.url),
-            kind: type,
-          }),
-          type,
-          subtitles,
-          provider: "plex",
-          resumeSeconds: Number(meta.viewOffset || 0) / 1000,
-          audioTracks, selectedAudioTrackId: audioTrackId || audioTracks.find(x=>x.selected)?.id || audioTracks[0]?.id,
-          ...(transcode
-            ? {
-                message:
-                  "Plex is converting this title for browser playback. Server transcoding capability is required.",
-              }
-            : {}),
-        });
       }
       throw providerError("Unsupported playback source.");
     }),
@@ -1451,227 +804,5 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     }),
   );
 
-  app.post(
-    "/api/plex/pin",
-    route(async (req, res) => {
-      for (const [id, pin] of pins)
-        if (pin.expires < Date.now()) pins.delete(id);
-      const clientIdentifier = randomBytes(16).toString("hex");
-      const c = { config: { clientIdentifier } };
-      const pin = await plexRequest(c, "https://plex.tv/api/v2/pins", null, {
-        method: "POST",
-        headers: {
-          ...plexHeaders(c),
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: "strong=true",
-      });
-      pins.set(String(pin.id), {
-        userId: req.user.id,
-        sessionId: req.session.id,
-        profileId: ctx.getProfileId(req),
-        code: pin.code,
-        clientIdentifier,
-        expires: Date.now() + 10 * 60000,
-      });
-      const params = new URLSearchParams({
-        clientID: clientIdentifier,
-        code: pin.code,
-        "context[device][product]": "TesPlay",
-      });
-      res.json({
-        id: pin.id,
-        code: pin.code,
-        url: `https://app.plex.tv/auth#?${params}`,
-      });
-    }),
-  );
-  app.post(
-    "/api/plex/pin/check",
-    route(async (req, res) => {
-      const id = String(req.body.id);
-      const pending = pins.get(id);
-      if (
-        !pending ||
-        pending.userId !== req.user.id ||
-        pending.sessionId !== req.session.id ||
-        pending.code !== req.body.code ||
-        pending.expires < Date.now()
-      )
-        throw providerError("Plex sign-in expired. Start again.");
-      const c = { config: { clientIdentifier: pending.clientIdentifier } };
-      const pin = await plexRequest(
-        c,
-        `https://plex.tv/api/v2/pins/${numeric(id)}?code=${encodeURIComponent(pending.code)}`,
-      );
-      if (!pin.authToken) return res.json({ pending: true });
-      const servers = await plexResources(c, pin.authToken);
-      const selected = servers.find((s) => s.connections.length);
-      const server = selected?.connections[0];
-      const saved = ctx.saveConnection(req, {
-        type: "plex",
-        name: "Plex",
-        config: {
-          clientIdentifier: pending.clientIdentifier,
-          userToken: pin.authToken,
-          token: selected?.accessToken || pin.authToken,
-          url: server?.uri || "",
-          serverId: selected?.clientIdentifier || "",
-          ownerProfileId: pending.profileId,
-          profileTokens: {
-            [pending.profileId]: {
-              token: selected?.accessToken || pin.authToken,
-              userToken: pin.authToken,
-              name: "Owner",
-            },
-          },
-        },
-      });
-      pins.delete(id);
-      res.json({ connection: saved, servers: publicServers(servers) });
-    }),
-  );
-  app.get(
-    "/api/plex/:connectionId/servers",
-    route(async (req, res) => {
-      const c = connection(req, req.params.connectionId, "plex");
-      res.json({
-        servers: publicServers(
-          await plexResources(
-            c,
-            c.config.profileTokens?.[ctx.getProfileId(req)]?.userToken ||
-              c.config.userToken ||
-              plexToken(req, c),
-          ),
-        ),
-      });
-    }),
-  );
-  app.post(
-    "/api/plex/:connectionId/server",
-    route(async (req, res) => {
-      const c = connection(req, req.params.connectionId, "plex");
-      const profileId = ctx.getProfileId(req);
-      const userToken =
-        c.config.profileTokens?.[profileId]?.userToken ||
-        c.config.userToken ||
-        plexToken(req, c);
-      const servers = await plexResources(c, userToken);
-      const server = servers.find((s) => s.clientIdentifier === req.body.id);
-      const endpoint = server?.connections.find(
-        (x) => !req.body.url || x.uri === req.body.url,
-      );
-      if (!server || !endpoint)
-        throw providerError("Choose a server returned by Plex.");
-      const profiles = {};
-      for (const [key, value] of Object.entries(c.config.profileTokens || {})) {
-        if (key === profileId)
-          profiles[key] = { ...value, token: server.accessToken, userToken };
-      }
-      saveConfig(req, c, {
-        url: endpoint.uri,
-        serverId: server.clientIdentifier,
-        token: server.accessToken,
-        ownerProfileId: profileId,
-        profileTokens: profiles,
-      });
-      res.json({ ok: true });
-    }),
-  );
-  app.get(
-    "/api/plex/:connectionId/profiles",
-    route(async (req, res) => {
-      const c = connection(req, req.params.connectionId, "plex");
-      const token = c.config.userToken || c.config.token;
-      const data = await plexRequest(
-        c,
-        "https://plex.tv/api/home/users",
-        token,
-      );
-      const users = array(data.MediaContainer?.User || data.users || data.User);
-      res.json({
-        profiles: users.map((x) => ({
-          id: String(x.id),
-          name: x.title || x.username,
-          thumb: art(req, c, x.thumb),
-          protected:
-            x.protected === true ||
-            x.protected === 1 ||
-            x.protected === "1" ||
-            x.protected === "true",
-        })),
-      });
-    }),
-  );
-  app.post(
-    "/api/plex/:connectionId/profile",
-    route(async (req, res) => {
-      const c = connection(req, req.params.connectionId, "plex");
-      const id = numeric(req.body.id);
-      const pin = String(req.body.pin || "");
-      if (pin && !/^\d{4}$/.test(pin))
-        throw providerError("Enter the four-digit Plex PIN.");
-      const switched = await plexRequest(
-        c,
-        `https://plex.tv/api/home/users/${id}/switch`,
-        c.config.userToken || c.config.token,
-        {
-          method: "POST",
-          headers: {
-            ...plexHeaders(c, c.config.userToken || c.config.token),
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams(pin ? { pin } : {}).toString(),
-        },
-      );
-      const user = switched.user || switched.User || switched;
-      const userToken = user.authToken || user.authenticationToken;
-      if (!userToken)
-        throw providerError(
-          "Plex did not authorize that profile. Check its PIN.",
-        );
-      const servers = await plexResources(c, userToken);
-      const serverId =
-        c.config.serverId ||
-        (await plexRequest(c, "/identity", c.config.token)).MediaContainer
-          ?.machineIdentifier;
-      const server = servers.find((x) => x.clientIdentifier === serverId);
-      if (!server?.accessToken)
-        throw providerError(
-          "This Plex profile does not have access to the selected server.",
-          403,
-        );
-      saveConfig(req, c, {
-        serverId,
-        profileTokens: {
-          ...(c.config.profileTokens || {}),
-          [ctx.getProfileId(req)]: {
-            token: server.accessToken,
-            userToken,
-            userId: id,
-            name: user.title || user.username,
-          },
-        },
-      });
-      res.json({ ok: true });
-    }),
-  );
-
-  app.get(
-    "/api/drive/artwork/:connectionId/:itemId",
-    route(async (req, res) => {
-      const c = connection(req, req.params.connectionId, "drive");
-      const token = await driveToken(req, c);
-      const id = req.params.itemId;
-      await checkDriveRoot(c, id, token);
-      const file = await driveFile(c, id, token);
-      ensure(req,c,{type:file.mimeType?.startsWith("audio/")?"audio":file.mimeType==="application/vnd.google-apps.folder"?"folder":"video"});
-      if (!file.thumbnailLink)
-        throw providerError("This Drive item has no thumbnail.", 404);
-      const url = art(req, c, file.thumbnailLink);
-      if (!url) throw providerError("Thumbnail is unavailable.", 404);
-      res.redirect(url);
-    }),
-  );
   googleAuth.registerRoutes(app, { connection, route });
 }

@@ -58,8 +58,6 @@ export type Connection = {
 export type Grant = { connectionId: string; kinds: string[]; sections: string[] | null; categories: string[] | null };
 export type Starred = { connectionId: string; kind: "channel" | "category" | "section"; id: string; title: string };
 export type Library = {
-  plexWatchlist?: MediaItem[];
-  plexNotes?: string[];
   stars?: Starred[];
   queue?: MediaItem[];
   favorites: MediaItem[];
@@ -78,7 +76,7 @@ export type StreamChoice = { id: string; label: string; description?: string; ad
 export type PlaybackOptions = { item?: MediaItem; audio: PlaybackChoice[]; subtitles: PlaybackChoice[]; qualities: PlaybackChoice[]; sources?: StreamChoice[]; note?: string };
 export type Playback = {
   defaults?: PlayerPreferences;
-  provider?: "plex" | "youtube" | "stremio";
+  provider?: "youtube";
   url: string;
   type: "hls" | "video" | "audio" | "external";
   streamKind?: "direct-file" | "continuous-ts" | "dual-input" | "growing-fmp4";

@@ -1,11 +1,21 @@
 import { assertAllowed } from "./access.js";
 import { categoryLoaded } from './iptv-selection.js';
 import { cleanText, httpError, validateMediaItem } from "./security.js";
+import { isRetiredConnection } from "./connection-routes.js";
 export function createLibraryContext(store, { getProfileId, getConnection }) {
+  // Saved titles and stars of a connection type TesPlay no longer offers stay
+  // in the database but are not shown: they can no longer be opened.
+  const usable = (req, item) => {
+    if (!item?.connectionId) return true;
+    try { return !isRetiredConnection(store.visibleConnection(req.user.id, item.connectionId)); }
+    catch { return true; }
+  };
+  const visible = (req, item) => store.visibleItem(req.user.id, item) && usable(req, item);
   const stars = (req) =>
     store.stars(getProfileId(req)).filter((s) => {
       try {
         const c = store.visibleConnection(req.user.id, s.connectionId);
+        if (isRetiredConnection(c)) return false;
         if (
           s.kind === "section" &&
           c.access?.sections &&
@@ -49,15 +59,15 @@ export function createLibraryContext(store, { getProfileId, getConnection }) {
     return {
       ...state,
       favorites: state.favorites
-        .filter((i) => store.visibleItem(req.user.id, i))
+        .filter((i) => visible(req, i))
         .map(normalize),
       progress: state.progress
-        .filter((p) => store.visibleItem(req.user.id, p.item))
+        .filter((p) => visible(req, p.item))
         .map((p) => ({ ...p, item: normalize(p.item) })),
       stars: stars(req),
       queue: store
         .queue(getProfileId(req))
-        .filter((i) => store.visibleItem(req.user.id, i))
+        .filter((i) => visible(req, i))
         .map(normalize),
     };
   }
@@ -122,26 +132,13 @@ export function registerLibraryRoutes(
         "Playback progress must be a valid position and duration in seconds.",
       );
     store.saveProgress(getProfileId(req), item, seconds, duration);
-    let plexSyncError;
-    try {
-      await ctx.syncPlexProgress?.(
-        req,
-        item,
-        seconds,
-        duration,
-        req.body.state,
-      );
-    } catch {
-      plexSyncError =
-        "Saved in TesPlay, but Plex could not update. Check your Plex connection.";
-    }
-    res.json({ ok: true, ...(plexSyncError ? { plexSyncError } : {}) });
+    res.json({ ok: true });
   });
   app.post("/api/library/stars", (req, res) => {
     verifyProfile(req);
     const value = req.body;
-    if (!["category", "channel", "section"].includes(value?.kind))
-      throw httpError(400, "Choose a channel, library or category to star.");
+    if (!["category", "channel"].includes(value?.kind))
+      throw httpError(400, "Choose a channel or category to star.");
     const c = ctx.getConnection(req, value.connectionId);
     const id = cleanText(value.id, "Star ID", 200),
       title = cleanText(value.title, "Star name", 200);
@@ -150,9 +147,7 @@ export function registerLibraryRoutes(
       (c.type !== "youtube" || !/^UC[A-Za-z0-9_-]{22}$/.test(id))
     )
       throw httpError(400, "Choose a YouTube channel.");
-    if (value.kind === "section" && c.type !== "plex")
-      throw httpError(400, "Choose a Plex library.");
-    if (value.kind === "category" && !["xtream", "m3u", "stremio"].includes(c.type))
+    if (value.kind === "category" && !["xtream", "m3u"].includes(c.type))
       throw httpError(400, "Choose an IPTV category.");
     res.json({
       stars: store.toggleStar(getProfileId(req), {

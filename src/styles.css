@@ -388,12 +388,6 @@ form {
   line-height: 1;
   letter-spacing: -1px;
 }
-.service-logo.plex {
-  font-family: Arial, sans-serif;
-  font-weight: 600;
-  letter-spacing: -2px;
-  font-size: 33px;
-}
 .service-logo.xtream {
   font-size: 20px;
   font-weight: 600;
@@ -419,10 +413,6 @@ form {
 .service-logo.crunchyroll {
   font-size: 37px;
   line-height: 25px;
-}
-.service-logo.drive {
-  font-size: 37px;
-  line-height: 27px;
 }
 .media-section {
   margin-bottom: 40px;
@@ -857,25 +847,12 @@ form {
   color: #d4c1a9;
   flex-shrink: 0;
 }
-.service-mark.plex {
-  color: #e6b34d;
-  font-family: Arial, sans-serif;
-  font-size: 24px;
-  letter-spacing: -1.5px;
-}
 .service-mark.xtream {
   color: #ae9aed;
   font-size: 20px;
 }
-.service-mark.drive {
-  color: #80c69b;
-  font-size: 35px;
-}
 .service-mark.youtube {
   color: #f7746e;
-}
-.service-mark.local {
-  color: #7ea9dc;
 }
 .type-label {
   font-size: 12px;
@@ -1067,7 +1044,7 @@ form {
   color: #f8eee8;
   background: #ffffff0d;
 }
-.plex-signin {
+.signin-panel {
   margin-bottom: 20px;
 }
 .selection-row {
@@ -2459,7 +2436,6 @@ form {
 .connector-choice { display:flex!important; align-items:center; gap:14px!important; cursor:pointer; margin:0!important; }
 .connector-choice input { width:18px; height:18px; accent-color:var(--accent); flex-shrink:0; }
 .connector-choice .service-logo { font-size:22px; min-width:48px; width:48px; height:38px; display:grid; place-items:center; margin:0; }
-.connector-choice .service-logo.plex { font-size:24px; }
 .connector-choice strong,.connector-choice small { display:block; }
 .connector-choice small { font-size:11px; color:#9b929f; margin-top:5px; }
 .connection-grant .grant-kinds { padding-top:16px; margin-top:12px; border-top:1px solid #ffffff0d; }
@@ -2565,8 +2541,6 @@ form {
 .youtube-shorts-filter input { width:18px; height:18px; accent-color:var(--accent); }
 .player-episode-picker { padding:4px 24px; background:#121014; border-top:1px solid #ffffff15; }
 .player-episode-picker .episode-selector { margin:12px 0; }
-.plex-watchlist { margin-bottom:35px; }
-.plex-watchlist h2 { margin-bottom:18px; }
 .youtube-shorts-filter { display:flex; align-items:center; flex-wrap:wrap; gap:12px 20px; margin:16px 0; }
 .youtube-shorts-filter label { display:flex; align-items:center; gap:9px; font-size:14px; }
 .youtube-shorts-filter span { color:var(--muted); font-size:12px; }
@@ -2687,15 +2661,6 @@ form {
 }
 @media(max-width:600px) {
   .sidebar-link.selected { box-shadow:inset 0 -2px 0 #c77858; }
-}
-@media(max-width:600px) {
-  .library-sidebar[aria-label='Plex libraries'] { flex-wrap:nowrap; overflow-x:auto; align-items:center; }
-}
-@media(max-width:600px) {
-  .library-sidebar[aria-label='Plex libraries'] > .sidebar-label { display:none; }
-}
-@media(max-width:600px) {
-  .library-sidebar[aria-label='Plex libraries'] .sidebar-category { flex-shrink:0; }
 }
 
 .youtube-device-signin .pair-code { letter-spacing:0.18em; }
