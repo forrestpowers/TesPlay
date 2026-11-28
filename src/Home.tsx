@@ -80,7 +80,6 @@ export default function Home({ cacheIdentity, connections, library: rawLibrary, 
     ...continueGroups.filter(group => group.items.length).map(group => ({ id: group.id, title: group.title, node: <Row presentation="continue" title={group.title} items={group.items.map(p => p.item)} onOpen={onOpen} onFavorite={onFavorite} isSaved={i => favorites.has(itemKey(i))} progress={i => progress.get(itemKey(i))} /> })),
     ...(connected ? shelves.filter(s => s.items.length).map(shelf => ({ id: `shelf:${shelf.id}`, title: shelf.title, node: <Row title={shelf.title} items={shelf.items} onOpen={onOpen} onFavorite={onFavorite} isSaved={i => favorites.has(itemKey(i))} progress={i => progress.get(itemKey(i))} more={() => viewAll(shelf)} /> })) : []),
     ...(library.favorites.length ? [{ id: 'my-list', title: 'My list', node: <Row title="My list" items={library.favorites} onOpen={onOpen} onFavorite={onFavorite} isSaved={i => favorites.has(itemKey(i))} more={() => onNavigate('list')} /> }] : []),
-    { id: 'youtube-card', title: 'YouTube: your channels', node: <div className="discovery-row"><button onClick={() => onNavigate('apps')} className="discovery-card"><YouTubeLogo /><div><span className="small-caps">YouTube</span><h3>Your channels, on this screen</h3><p>Browse subscriptions or play a video link</p></div><ArrowUpRight size={20} /></button></div> },
   ];
   const byId = new Map(sections.map(section => [section.id, section]));
   const arrangement = editing ?? homeLayout;
