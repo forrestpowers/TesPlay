@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Seeking a YouTube video (or any movie or episode) no longer starts the sound before the picture: audio waits until the first frame at the new position is decoded, instead of video catching up by dropping frames.
 - Live TV, Movies and Series open the IPTV library of that kind directly, with the categories chosen for it in the sidebar (no All connections step). Movies and Series were blank with `IPTV_ON_DEMAND=1`; they now list the titles.
 - YouTube: **Settings → Resolution** in the player lists the H.264 sizes YouTube offers for the video (up to 1080p, 60 fps where that is all a size has) beside **Auto**. The size comes straight from YouTube (no transcoding), the video reopens where it was, and the choice is remembered on that screen.
 - YouTube connects only by signing in with your phone: the Data API key and Google web sign-in modes are gone, with `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. An older connection that used them asks for the phone sign-in, which replaces its old settings.

@@ -46,3 +46,17 @@ test('playback stats derive source, shown, dropped and skipped frame rates', asy
   assert.equal(frameRates({ at: 1000, rendered: 0, dropped: 0, skipped: 0 }, { at: 1000, rendered: 0, dropped: 0, skipped: 0 }), null);
   assert.equal(frameRates({ at: 0, rendered: 0, dropped: 0, skipped: 0 }, { at: 1000, rendered: 0, dropped: 0, skipped: 0 }).source, null);
 });
+
+test('after an on-demand start or seek, audio waits for the first video frame at the new position', () => {
+  // Long-GOP sources (YouTube) decode seconds of video before the seek point while audio is
+  // ready at once; the engine holds the first sound until that frame is decoded (bounded).
+  const engine = readFileSync(new URL('../vendor/tesplayer/packages/player/src/engine.ts', import.meta.url), 'utf8');
+  const play = engine.slice(engine.indexOf('  private async play('), engine.indexOf('  private async pause('));
+  assert.match(play, /pipeline\.videoTrack && pipeline\.audioTrack && !this\.state\.isLive/);
+  const video = engine.slice(engine.indexOf('  private async runVideo('), engine.indexOf('  private async waitUntilVideoDue('));
+  assert.ok(video.indexOf('mediaTimestamp < start) continue;') < video.indexOf('operation.markVideoReady?.();'), 'ready only after preroll frames are skipped');
+  assert.match(video, /finally \{\s*\/\/ TesPlay patch[^\n]*\n\s*operation\.markVideoReady\?\.\(\);/, 'a finished or failed video track releases audio');
+  const audio = engine.slice(engine.indexOf('  private async runAudio('), engine.indexOf('  private async runMp2Audio('));
+  assert.ok(audio.indexOf('await this.waitForVideoReady(operation);') < audio.indexOf('this.scheduleAudioBuffer('), 'the first buffer waits before it is scheduled');
+  assert.match(engine, /const VIDEO_READY_TIMEOUT_MS = 8000;/);
+});

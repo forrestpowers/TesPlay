@@ -54,6 +54,8 @@ import {
 // TesPlay patch: half frame rate. Sources faster than 40 fps can present every
 // other frame, either from the start (halfFrameRate) or adaptively once 10% of
 // a 120-frame window misses its deadline after warm-up (adaptiveFrameRate).
+/** TesPlay patch: the longest audio waits for the first video frame after a start or seek. */
+const VIDEO_READY_TIMEOUT_MS = 8000;
 const ADAPTIVE_MIN_INTERVAL_SECONDS = 1 / 40;
 const ADAPTIVE_WARMUP_FRAMES = 60;
 const ADAPTIVE_WINDOW_FRAMES = 120;
@@ -170,6 +172,9 @@ interface Operation {
   liveRefreshStarted: boolean;
   /** TesPlay patch: this playback presents every other frame (see adaptiveFrameRate). */
   presentHalfRate: boolean;
+  /** TesPlay patch: settles once video has its first frame at the start position (see play). */
+  videoReady: Promise<void> | null;
+  markVideoReady: (() => void) | null;
   readonly lastRawTimestamp: Record<'audio' | 'video', number | null>;
   readonly trackTimelineOffset: Record<'audio' | 'video', number | null>;
   readonly authorityVersions: Record<InvocationDomain, number>;
@@ -862,6 +867,22 @@ export class CanvasPlayerEngine implements PlayerEngine {
       presentationDelaySeconds('audio', this.state.diagnostics.signedAvOffsetMs);
     operation.lastVideoTimestamp = null;
     operation.audioEnded = false;
+    // TesPlay patch: starting or seeking on demand, video first decodes from the keyframe
+    // before the start position (seconds of frames on a long-GOP source such as YouTube)
+    // while audio is ready at once. Hold the sound until the picture at the start position
+    // is decoded, so both begin together instead of sound first and frames dropped late.
+    operation.videoReady = null;
+    operation.markVideoReady = null;
+    if (pipeline.videoTrack && pipeline.audioTrack && !this.state.isLive) {
+      let settle: () => void = () => undefined;
+      operation.videoReady = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      operation.markVideoReady = (): void => {
+        operation.markVideoReady = null;
+        settle();
+      };
+    }
     this.state.phase = 'playing';
     this.startLiveRefresh(operation);
     this.lastProgressMonotonic = this.services.now();
@@ -1840,6 +1861,8 @@ export class CanvasPlayerEngine implements PlayerEngine {
           this.handlePtsDiscontinuity(mediaTimestamp, start, operation);
           // Decoder preroll is needed for reference frames, not presentation.
           if (!this.state.isLive && mediaTimestamp < start) continue;
+          // TesPlay patch: the first frame at the start position is decoded; audio may begin.
+          operation.markVideoReady?.();
           // TesPlay patch: estimate the source frame interval in presentation order.
           if (previousSeen !== null) {
             const step = mediaTimestamp - previousSeen;
@@ -1909,6 +1932,8 @@ export class CanvasPlayerEngine implements PlayerEngine {
       }
       await producer;
     } finally {
+      // TesPlay patch: never hold audio back for a video track that ended or failed.
+      operation.markVideoReady?.();
       queue.close();
       operation.videoQueues.delete(queue);
       const controller = currentVideoController();
@@ -2038,6 +2063,7 @@ export class CanvasPlayerEngine implements PlayerEngine {
       skipLiveWait: false,
     })) {
       this.ensureCurrent(operation);
+      await this.waitForVideoReady(operation);
       await this.waitForAudioCapacity(operation);
       this.scheduleAudioBuffer(
         wrapped.buffer,
@@ -2086,6 +2112,7 @@ export class CanvasPlayerEngine implements PlayerEngine {
             'DECODE_FAILED',
             'MPEG audio layer changed within stream',
           );
+        await this.waitForVideoReady(operation);
         await this.waitForAudioCapacity(operation);
         const pcm = await this.awaitOperation(operation, () =>
           decoder.decode(encoded.data),
@@ -2184,6 +2211,21 @@ export class CanvasPlayerEngine implements PlayerEngine {
       0,
       operation.nextAudioTime - context.currentTime,
     );
+  }
+
+  /**
+   * TesPlay patch: before the first sound of a start or seek, wait for video to decode its
+   * first frame at the start position (see play), at most VIDEO_READY_TIMEOUT_MS.
+   */
+  private async waitForVideoReady(operation: Operation): Promise<void> {
+    const ready = operation.videoReady;
+    if (!ready) return;
+    operation.videoReady = null;
+    const timeout = waitForDelay(VIDEO_READY_TIMEOUT_MS, operation.controller.signal).catch(
+      () => undefined,
+    );
+    await Promise.race([ready, timeout]);
+    this.ensureCurrent(operation);
   }
 
   private async waitForAudioCapacity(operation: Operation): Promise<void> {
@@ -2898,6 +2940,8 @@ export class CanvasPlayerEngine implements PlayerEngine {
       liveTimelineOffset: null,
       liveRefreshStarted: false,
       presentHalfRate: false,
+      videoReady: null,
+      markVideoReady: null,
       lastRawTimestamp: { audio: null, video: null },
       trackTimelineOffset: { audio: null, video: null },
       authorityVersions: {
