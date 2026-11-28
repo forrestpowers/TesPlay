@@ -124,3 +124,20 @@
 
 /* The original floating navigation supplies the spotlight header inset. */
 .app-shell[data-navigation-overlay=true] > main .hero { padding-top: 0; }
+
+/* Home toolbar and Customize home */
+.home-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:8px 0 18px}
+.home-toolbar h1{font-size:clamp(26px,3vw,34px);margin:0}
+.home-toolbar-actions{display:flex;gap:10px;flex-wrap:wrap}
+.home-toolbar .button svg{margin-right:6px}
+.home-intro,.home-edit-help{color:var(--muted);margin:0 0 18px;max-width:70ch}
+.home-arrange{list-style:none;margin:0 0 24px;padding:0;display:grid;gap:8px}
+.home-arrange li{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:60px;padding:8px 10px 8px 18px;border:1px solid #ffffff14;border-radius:12px;background:#ffffff06}
+.home-arrange li.is-hidden{opacity:.55}
+.home-arrange-title{display:flex;align-items:center;gap:10px;min-width:0;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.home-arrange-title small{flex:none;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid #ffffff20;border-radius:6px;padding:2px 6px}
+.home-arrange-actions{display:flex;align-items:center;gap:6px;flex:none}
+.home-arrange-actions .icon-button{width:44px;height:44px}
+.home-arrange-actions .icon-button:disabled{opacity:.3}
+.home-arrange-actions .button{min-height:44px;min-width:92px;justify-content:center}
+.home-arrange-actions .button svg{margin-right:6px}

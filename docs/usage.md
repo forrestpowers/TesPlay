@@ -24,6 +24,10 @@ Both devices must reach the same installation. A QR containing `localhost` or `1
 Existing accounts keep using the original database filename, session cookie, Plex client identifiers and Docker volume name. These internal names are retained deliberately so the TesPlay rename does not create a fresh installation or sign out saved accounts.
 
 
+## Home screen
+
+Home shows your libraries, Continue watching rows (one for your IPTV provider, one for YouTube and one for anything else), the rows from each connection, My list and a YouTube shortcut. Choose **Customize home** to move sections up or down or hide them, then **Done**. The arrangement is saved to your account and used on every screen; **Reset to default** restores the original order. New rows, such as a newly starred subscription, appear in their default place.
+
 ## Libraries, playlists and shared accounts
 
 Plex opens with its actual library sections in the sidebar. Movies/TV libraries show the server’s existing hubs and collections, including recently added/watched and removal collections when supplied by that server. Click a row heading or **View all** for the complete paginated list. Plex Watchlist matches saved titles to the local server; titles absent from the server are shown as unavailable.

@@ -35,6 +35,14 @@ const descriptions = {
 const itemKey = (item) =>
   `${item.connectionId ?? "public"}:${item.type}:${item.id}`;
 
+/** A home screen arrangement: section ids in order, and the hidden ones. */
+function validHomeLayout(value) {
+  if (value === null) return true;
+  const ids = (list) => Array.isArray(list) && list.length <= 400 && list.every((id) => typeof id === "string" && id.length > 0 && id.length <= 300);
+  return !!value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).every((key) => key === "order" || key === "hidden") && ids(value.order) && ids(value.hidden);
+}
+
 export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const key = loadEncryptionKey(dataDir, encryptionKey);
@@ -359,12 +367,13 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
     preferences(userId) {
       const row = db
         .prepare(
-          "SELECT auto_play_next,hide_youtube_shorts,car_mode FROM user_preferences WHERE user_id=?",
+          "SELECT auto_play_next,hide_youtube_shorts,car_mode,home_layout FROM user_preferences WHERE user_id=?",
         )
         .get(userId);
       return {
         autoPlayNext: row ? Boolean(row.auto_play_next) : true,
         ...(row?.car_mode ? { carMode: row.car_mode } : {}),
+        ...(row?.home_layout ? { homeLayout: JSON.parse(row.home_layout) } : {}),
         ...(row?.hide_youtube_shorts != null
           ? { hideYouTubeShorts: Boolean(row.hide_youtube_shorts) }
           : {}),
@@ -378,7 +387,9 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
       if (
         !fields.length ||
         fields.some((field) =>
-          field === "carMode"
+          field === "homeLayout"
+            ? !validHomeLayout(value[field])
+            : field === "carMode"
             ? !["off", "720", "480"].includes(value[field])
             : !["autoPlayNext", "hideYouTubeShorts"].includes(field) ||
               typeof value[field] !== "boolean",
@@ -402,6 +413,12 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
           ? Number(value.hideYouTubeShorts)
           : null;
         const carMode = Object.hasOwn(value, "carMode") ? value.carMode : null;
+        // null resets the home screen to its default arrangement.
+        if (Object.hasOwn(value, "homeLayout")) {
+          db.prepare("INSERT INTO user_preferences (user_id,home_layout) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET home_layout=excluded.home_layout")
+            .run(userId, value.homeLayout === null ? null : JSON.stringify({ order: value.homeLayout.order, hidden: value.homeLayout.hidden }));
+          if (fields.length === 1) return this.preferences(userId);
+        }
         db.prepare(
           "INSERT INTO user_preferences (user_id,auto_play_next,hide_youtube_shorts,car_mode) VALUES (?,COALESCE(?,1),?,?) ON CONFLICT(user_id) DO UPDATE SET auto_play_next=COALESCE(?,user_preferences.auto_play_next),hide_youtube_shorts=COALESCE(excluded.hide_youtube_shorts,user_preferences.hide_youtube_shorts),car_mode=COALESCE(excluded.car_mode,user_preferences.car_mode)",
         ).run(userId, autoPlayNext, hideYouTubeShorts, carMode, autoPlayNext);

@@ -226,6 +226,14 @@ function migrateAccountPreferences(db) {
     db.exec(
       "ALTER TABLE user_preferences ADD COLUMN car_mode TEXT CHECK(car_mode IN ('off','720','480'))",
     );
+  // The account's home screen arrangement (JSON: section order and hidden sections).
+  if (
+    !db
+      .prepare("PRAGMA table_info(user_preferences)")
+      .all()
+      .some((column) => column.name === "home_layout")
+  )
+    db.exec("ALTER TABLE user_preferences ADD COLUMN home_layout TEXT");
 }
 
 export function initializeStoreSchema(db, { itemKey }) {

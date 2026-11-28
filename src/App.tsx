@@ -181,8 +181,8 @@ export default function App() {
     onToast: showToast,
   });
   const library = useMemo(() => filterLibraryForYouTubeVisibility(rawLibrary, hideYouTubeShorts, connections), [rawLibrary, hideYouTubeShorts, connections]);
-  // Movies and Series only appear when a connected library can fill them: IPTV offers live
-  // channels only, so Drive (and older Plex or Stremio connections) are what is left.
+  // Movies and Series only appear when a connected library can fill them: IPTV movies and
+  // series (when on-demand is on), or an older Drive, Plex or Stremio connection.
   const hiddenDestinations = useMemo(() => {
     const types = new Set(connections.map(c => c.type === 'xtream' && c.onDemand ? 'xtream-on-demand' : c.type));
     const any = (...wanted: string[]) => wanted.some(type => types.has(type));
@@ -312,6 +312,9 @@ export default function App() {
   }
   async function updateCarMode(carMode: 'off' | '720' | '480') {
     await updatePreferences({ carMode });
+  }
+  async function updateHomeLayout(homeLayout: { order: string[]; hidden: string[] } | null) {
+    await updatePreferences({ homeLayout });
   }
   useEffect(() => {
     const id = setTimeout(() => {
@@ -656,7 +659,7 @@ export default function App() {
         <div hidden={searchOpen&&!!query}>
         {view === "home" && (
           <Suspense fallback={<Busy label="Loading your home…" />}>
-            <Home hideYouTubeShorts={hideYouTubeShorts} cacheIdentity={`${auth.user.id}:${auth.activeProfileId}`} key={auth?.activeProfileId || "preview"} connections={connections} library={rawLibrary} signedIn={signedIn} query={query} connectionsReady={connectionsReady} connectionsError={connectionsError} onReloadConnections={reloadConnections} canManage={auth.user.canManageConnections ?? auth.user.role === "owner"}
+            <Home hideYouTubeShorts={hideYouTubeShorts} cacheIdentity={`${auth.user.id}:${auth.activeProfileId}`} key={auth?.activeProfileId || "preview"} connections={connections} library={rawLibrary} signedIn={signedIn} query={query} connectionsReady={connectionsReady} connectionsError={connectionsError} onReloadConnections={reloadConnections} canManage={auth.user.canManageConnections ?? auth.user.role === "owner"} homeLayout={preferencesReady ? preferences.homeLayout : undefined} onHomeLayout={updateHomeLayout}
               onOpen={open} onFavorite={favorite} onDetails={inspect} onConnect={connect} onNavigate={navigate}
               onBrowse={(c, parent, nextKind, channel, category) => { browse(c); if (parent) open(parent); else if (nextKind) setKind(nextKind); if(channel) setYouTubeChannel(channel);if(category)setBrowseCategory(category); }} />
           </Suspense>
