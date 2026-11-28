@@ -1,16 +1,16 @@
 import { RefreshButton } from "./components";
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ChevronLeft, Clock, Film, Folder, Radio, Search, Star, Tv, Info } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronLeft, Clock, Film, Radio, Search, Star, Tv, Info } from 'lucide-react';
 import { api, errorMessage } from './api';
-import { Busy, Card, Empty, Row, MediaDetailsContext } from './components';
+import { Busy, Card, Empty, MediaDetailsContext } from './components';
 import { itemKey } from './types';
 import type { Connection, Library, MediaItem, Starred } from './types';
 import {invalidateHomePreview} from './home-library';
-import { librarySources, unifiedShelves } from './library-browser';
+import { librarySources } from './library-browser';
 import { episodeSeasons, episodesForSeason } from './episodes';
-import { filterYouTubeItems, filterYouTubeShelves } from './youtube-visibility';
-import type { CatalogResult, LibraryMode, LibraryShelf } from './library-browser';
-import { bundleIptvShelves, isIptv } from './iptv-library';
+import { filterYouTubeItems } from './youtube-visibility';
+import type { CatalogResult, LibraryMode } from './library-browser';
+import { isIptv } from './iptv-library';
 import IptvBundleBrowser from './IptvBundleBrowser';
 type Props = {connections:Connection[];library:Library;hideYouTubeShorts?:boolean;onOpen:(i:MediaItem)=>void;onBrowseSeries?:(i:MediaItem)=>void;onFavorite:(i:MediaItem)=>void;onStar:(s:Starred)=>void;onConnect:()=>void;onYouTube:()=>void;onGuide:(i:MediaItem)=>void;query:string};
 const kinds=[['live','Live TV',Radio],['movie','Movies',Film],['series','TV shows',Tv]] as const;
@@ -70,33 +70,11 @@ export function SourceBrowser({connection:c,initialParent,initialKind='all',init
 
 export default function LibraryBrowser({mode,selectedConnection,initialParent,initialKind,initialCategory, ...props}:Props&{mode:LibraryMode;selectedConnection:Connection|null;initialParent?:MediaItem;initialKind?:string;initialCategory?:string}) {
   const sources=useMemo(()=>librarySources(props.connections),[props.connections]);
-  const [filterId,setFilterId]=useState(''),[draft,setDraft]=useState(props.query),[query,setQuery]=useState(props.query),[refresh,setRefresh]=useState(0),[detail,setDetail]=useState<LibraryShelf|null>(null);
-  const lastRefresh=useRef(refresh);
-  const [shelves,setShelves]=useState<Record<string,LibraryShelf[]>>({}),[errors,setErrors]=useState<Record<string,string>>({}),[pending,setPending]=useState<string[]>([]);
-  useEffect(()=>{const t=setTimeout(()=>setQuery(draft),300);return()=>clearTimeout(t);},[draft]);
-  useEffect(()=>setDraft(props.query),[props.query]);
-  useEffect(()=>{
-    if(mode==='catalog')return;
-    const force=refresh!==lastRefresh.current;lastRefresh.current=refresh;
-    const controller=new AbortController(), available=sources.filter(c=>!filterId||filterId==='iptv'&&isIptv(c)||c.id===filterId);
-    setShelves(previous=>Object.fromEntries(available.filter(c=>previous[c.id]).map(c=>[c.id,previous[c.id]])));setErrors({});setPending(available.map(c=>c.id));
-    for(const c of available) void unifiedShelves(c,mode,<T,>(path:string,signal:AbortSignal)=>api<T>(path,undefined,undefined,signal),controller.signal,force).then(rows=>{if(!controller.signal.aborted){if(force)invalidateHomePreview(c.id);setShelves(s=>({...s,[c.id]:rows}));}}).catch(e=>{if(!controller.signal.aborted)setErrors(s=>({...s,[c.id]:errorMessage(e)}));}).finally(()=>{if(!controller.signal.aborted)setPending(p=>p.filter(id=>id!==c.id));});
-    return()=>controller.abort();
-  },[mode,sources,filterId,refresh]);
-  const bundle = (connection:Connection,wanted?:string,category?:string,onBack?:()=>void) => <IptvBundleBrowser connections={props.connections} library={props.library} onStar={props.onStar} onOpen={props.onOpen} onConnect={props.onConnect} query={props.query} initialConnection={connection} initialKind={wanted} initialCategory={category} onBack={onBack} renderItems={(items,onOpen)=><Grid items={items} props={props} onOpen={onOpen}/>} renderParent={(parent,back)=>{const c=props.connections.find(c=>c.id===parent.connectionId);return c?<SourceBrowser key={`${c.id}:${parent.id}`} connection={c} initialParent={parent} initialKind="series" props={props} onBack={back}/>:null;}}/>;
+  const bundle = (connection:Connection,wanted?:string,category?:string,lockKind=false) => <IptvBundleBrowser connections={props.connections} library={props.library} onStar={props.onStar} onOpen={props.onOpen} onConnect={props.onConnect} query={props.query} initialConnection={connection} initialKind={wanted} initialCategory={category} lockKind={lockKind} renderItems={(items,onOpen)=><Grid items={items} props={props} onOpen={onOpen}/>} renderParent={(parent,back)=>{const c=props.connections.find(c=>c.id===parent.connectionId);return c?<SourceBrowser key={`${c.id}:${parent.id}`} connection={c} initialParent={parent} initialKind="series" props={props} onBack={back}/>:null;}}/>;
   if(mode==='catalog'&&selectedConnection) return <section className="page-section library-page">{isIptv(selectedConnection)&&!initialParent?bundle(selectedConnection,initialKind,initialCategory):<SourceBrowser key={`${selectedConnection.id}:${initialParent?.id||''}:${initialKind}`} connection={selectedConnection} initialParent={initialParent} initialKind={initialKind} initialCategory={initialCategory} props={props}/>}</section>;
-  if(detail) return <section className="page-section library-page">{isIptv(detail.connection)?bundle(detail.connection,detail.kind,undefined,()=>setDetail(null)):<SourceBrowser key={detail.id} connection={detail.connection} initialParent={detail.parent} initialKind={detail.kind} initialCategory={detail.category} props={props} onBack={()=>setDetail(null)}/>}</section>;
-  const allShelves=bundleIptvShelves(sources.flatMap(c=>shelves[c.id]||[]));
-  const matches=(i:MediaItem)=>!query||`${i.title} ${i.subtitle||''}`.toLowerCase().includes(query.toLowerCase());
-  const visible=filterYouTubeShelves(allShelves,props.hideYouTubeShorts||false,props.connections,props.library.progress).map(s=>({...s,items:s.items.filter(matches)})).filter(s=>s.items.length);
-  return <section className="page-section library-page"><div className="library-layout">
-    <aside className="library-sidebar" aria-label="Library sources"><div className="sidebar-label">Your sources</div><button className={`sidebar-link ${!filterId?'selected':''}`} onClick={()=>setFilterId('')}>All connections</button>{sources.some(isIptv)&&<button className={`sidebar-link ${filterId==='iptv'?'selected':''}`} onClick={()=>setFilterId('iptv')}><Radio size={18}/>IPTV</button>}{sources.filter(c=>!isIptv(c)).map(c=><button className={`sidebar-link ${filterId===c.id?'selected':''}`} key={c.id} onClick={()=>setFilterId(c.id)}><Folder size={18}/> {c.name}</button>)}</aside>
-    <div className="library-main"><div className="library-heading"><div><span className="eyebrow">YOUR COLLECTION, TOGETHER</span><h1>{mode==='series'?'TV shows':mode==='live'?'Live TV':'Movies'}</h1><p>Browse your collection by connection.</p></div><RefreshButton label="Refresh all libraries" onRefresh={()=>setRefresh(n=>n+1)}/></div>
-      <SearchBox query={draft} onChange={setDraft}/>
-      {sources.map(c=>errors[c.id]&&<div className="home-source-status" role="status" key={c.id}><div><strong>{c.name}</strong><p>{errors[c.id]}</p></div></div>)}
-      {visible.map(s=><Row key={s.id} title={s.title} items={s.items} onOpen={props.onOpen} onFavorite={props.onFavorite} isSaved={i=>saved(props.library,i)} progress={i=>progress(props.library,i)} more={()=>setDetail(s)}/>)}
-      {pending.length>0&&<Busy label="Loading connected libraries…"/>}
-      {!pending.length&&!visible.length&&<Empty title={query?'No matching titles':'No titles available'} action={<button className="button ghost" onClick={props.onConnect}>Connections<ArrowRight size={16}/></button>}>{props.hideYouTubeShorts&&allShelves.some(s=>s.items.some(matches))?'Short videos are hidden. Change this in Settings or browse another library.':query?'Search within a source to search its complete library.':'Choose a connection or library to browse.'}</Empty>}
-    </div>
-  </div></section>;
+  // Live TV, Movies and Series open the IPTV library of that kind straight away, with the
+  // categories chosen for it in the sidebar.
+  const iptv=sources.filter(isIptv);
+  if(!iptv.length) return <section className="page-section library-page"><Empty title="Connect your IPTV provider" action={<button className="button ghost" onClick={props.onConnect}>Connections<ArrowRight size={16}/></button>}>Live TV, movies and series come from your IPTV connection.</Empty></section>;
+  return <section className="page-section library-page">{mode==='catalog'?bundle(iptv[0]):bundle(iptv[0],mode==='series'?'series':mode==='live'?'live':'movie',undefined,true)}</section>;
 }

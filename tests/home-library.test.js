@@ -58,20 +58,12 @@ test('aborted home requests reject instead of publishing rows for the previous p
 });
 
 const browserSource=ts.transpileModule(fs.readFileSync(new URL('../src/library-browser.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
-const {librarySources,unifiedShelves}=await import('data:text/javascript;base64,'+Buffer.from(browserSource).toString('base64'));
+const {librarySources}=await import('data:text/javascript;base64,'+Buffer.from(browserSource).toString('base64'));
 test('shared library sources retain other connectors without mutating the connected accounts',()=>{
   const connections=['youtube','xtream','m3u','youtube'].map((type,index)=>connection(type,String(index)));
   assert.deepEqual(librarySources(connections).map(c=>c.type),['xtream','m3u']);
   assert.equal(connections.length,4);
   assert.deepEqual(librarySources(connections.filter(c=>c.type==='youtube')),[]);
-});
-test('Live TV, Movies and Shows never request YouTube feeds, including authorized accounts and refreshes',async()=>{
-  for(const mode of ['live','movies','series']) for(const oauthAuthorized of [true,false]) for(const force of [true,false]) {
-    const result=await unifiedShelves({...connection('youtube'),authMode:'oauth',oauthAuthorized},mode,()=>{
-      assert.fail(`${mode} must leave YouTube requests to the dedicated hub`);
-    },new AbortController().signal,force);
-    assert.deepEqual(result,[]);
-  }
 });
 
 test('six highlights balance three connectors and select their newest videos before older or live content',()=>{

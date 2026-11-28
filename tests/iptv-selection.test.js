@@ -215,13 +215,12 @@ test('M3U imports only selected groups, including uncategorized channels, and bl
 
 test('bundle merges matching category names while retaining connection and content-type identities', async () => {
   const source = ts.transpileModule(await readFile(new URL('../src/iptv-library.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
-  const {bundleIptvCategories,bundleIptvItems,bundleIptvShelves,supportsIptvKind} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const {bundleIptvCategories,bundleIptvItems,supportsIptvKind} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
   const first = {id:'one',type:'xtream',loadedCategories:['live:0']}, second = {id:'two',type:'m3u'};
   const results = {one:{items:[{id:'7',type:'live',title:'One',connectionId:'one'}],categories:[{id:'live:0',name:'Sports'}]},two:{items:[{id:'7',type:'live',title:'Two',connectionId:'two'}],categories:[{id:'Sports',name:'sports'}]}};
   assert.equal(bundleIptvCategories(results).length,1);
   assert.equal(bundleIptvCategories(results)[0].sources.length,2);
   assert.deepEqual(bundleIptvItems(results).map(i => i.connectionId),['one','two']);
-  assert.equal(bundleIptvShelves([{id:'one:live',kind:'live',connection:first,items:results.one.items},{id:'two:live',kind:'live',connection:second,items:results.two.items}]).length,1);
   assert.equal(supportsIptvKind(first,'movie'),false);
   assert.equal(supportsIptvKind(second,'movie'),false);
   assert.equal(supportsIptvKind({...first,access:{kinds:['movie']}},'live'),false);
