@@ -86,7 +86,6 @@ export async function createApp(options = {}) {
                 "'self'",
                 "blob:",
                 "'wasm-unsafe-eval'",
-                "https://static.cloudflareinsights.com",
                 (_req, res) => `'nonce-${res.locals.cspNonce}'`,
               ],
               styleSrc: ["'self'", "'unsafe-inline'"],
@@ -142,9 +141,7 @@ export async function createApp(options = {}) {
   app.use(express.json({ limit: "64kb", strict: true }));
   const connections = createConnectionContext(store);
   let remote;
-  const library = createLibraryContext(store, { getProfileId, getConnection: connections.getConnection,
-    validateTransientItem: (req, item) => remote.validateMediaItem(req, item),
-  });
+  const library = createLibraryContext(store, { getProfileId, getConnection: connections.getConnection });
   const { visibleLibrary, ownedItem } = library;
   const ctx = {
     ...connections,
@@ -160,7 +157,6 @@ export async function createApp(options = {}) {
     sealMedia: (value) => store.sealMedia(value),
     openMedia: (token) => store.openMedia(token),
   };
-  ctx.authorizeRemoteMedia = (req, resource) => remote.authorizeMedia(req, resource);
   ctx.media = createMediaService(ctx);
   app.get("/api/health", (req, res) => res.json({ ok: true }));
   registerScreenCheckRoutes(app, { onReport: options.onScreenCheck });
@@ -174,8 +170,6 @@ export async function createApp(options = {}) {
     store,
   });
   remote = registerRemoteRoutes(app, { enabled: remoteEnabled, store, getProfileId, validateRemoteItem: ownedItem, requireAuth, authStatus,
-    media: ctx.media, dataDir: options.dataDir ?? process.env.DATA_DIR ?? resolve(rootDir, "data"),
-    mediaDependencies: options.remoteMediaDependencies,
     startRemoteSession(req,res,screen) {
       if (req.session?.id === screen.host_session_id) throw httpError(409,'Open this remote link on another browser.');
       if (req.session?.scope === 'full' && req.user?.id === screen.user_id) {

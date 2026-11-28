@@ -1,7 +1,7 @@
 import { assertAllowed } from "./access.js";
 import { categoryLoaded } from './iptv-selection.js';
 import { cleanText, httpError, validateMediaItem } from "./security.js";
-export function createLibraryContext(store, { getProfileId, getConnection, validateTransientItem }) {
+export function createLibraryContext(store, { getProfileId, getConnection }) {
   const stars = (req) =>
     store.stars(getProfileId(req)).filter((s) => {
       try {
@@ -63,7 +63,7 @@ export function createLibraryContext(store, { getProfileId, getConnection, valid
   }
   function ownedItem(req) {
     const item = validateMediaItem(req.body?.item);
-    if (item.providerType === "remote-media") return validateTransientItem(req, item);
+    if (item.providerType === "remote-media") throw httpError(400, "Videos sent from a phone are no longer supported.");
     if (item.connectionId) {
       const c = getConnection(req, item.connectionId);
       if (!categoryLoaded(c, item)) throw httpError(403, 'This category is not loaded. Enable it in IPTV settings.');
@@ -93,7 +93,6 @@ export function registerLibraryRoutes(
   app.post("/api/library/favorites", (req, res) => {
     verifyProfile(req);
     const item = ownedItem(req);
-    if (item.providerType === "remote-media") throw httpError(400, "Temporary videos stay in your phone remote until it disconnects.");
     res.json({
       favorites: store.toggleFavorite(getProfileId(req), item),
     });
@@ -122,9 +121,6 @@ export function registerLibraryRoutes(
         400,
         "Playback progress must be a valid position and duration in seconds.",
       );
-    // Phone uploads and pasted links expire with their pairing, so do not save
-    // them as library history entries that can no longer be opened.
-    if (item.providerType === "remote-media") return res.json({ ok: true });
     store.saveProgress(getProfileId(req), item, seconds, duration);
     let plexSyncError;
     try {
@@ -171,7 +167,6 @@ export function registerLibraryRoutes(
     verifyProfile(req);
     const action = req.body?.action;
     const item = action === "clear" ? null : ownedItem(req);
-    if (item?.providerType === "remote-media") throw httpError(400, "Temporary videos cannot be saved to a playlist. Play them from your phone remote.");
     if (item && ["series", "folder"].includes(item.type))
       throw httpError(400, "Choose a playable title for your queue.");
     if (

@@ -1,10 +1,10 @@
 export class AccessSessionExpiredError extends Error {
   constructor() {
-    super("Your Cloudflare screen sign-in expired. Reload TesPlay to sign in again; your library is saved.");
+    super("Your server sign-in expired. Reload TesPlay to sign in again; your library is saved.");
   }
 }
 
-/** Ask Access for an HTTP error instead of following an HTML login redirect. */
+/** Ask a reverse proxy's sign-in layer for an HTTP error instead of following an HTML login redirect. */
 export const tesPlayFetch: typeof fetch = async (input, init) => {
   const url = new URL(input instanceof Request ? input.url : String(input), location.href);
   const ownApi = url.origin === location.origin && url.pathname.startsWith('/api/');

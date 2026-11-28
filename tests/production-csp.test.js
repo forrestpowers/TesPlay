@@ -18,7 +18,7 @@ test('production HTML has fresh matching script nonces, permits player workers a
     const nonce=policy.match(/'nonce-([^']+)'/)[1];nonces.push(nonce);assert.match(html,new RegExp(`<script nonce="${nonce}" type="module"`));
     const directives=Object.fromEntries(policy.split(';').map(value=>{const [name,...sources]=value.trim().split(/\s+/);return[name,sources];}));
     assert.ok(directives['script-src'].includes('blob:'));assert.ok(directives['worker-src'].includes('blob:'));
-    assert.ok(directives['script-src'].includes('https://static.cloudflareinsights.com'));
+    assert.ok(!directives['script-src'].some(source=>source.startsWith('https:')),'no third-party scripts');
     assert.ok(!directives['script-src'].includes("'unsafe-inline'"));
     assert.deepEqual(directives['frame-src'],["'none'"]);
   }

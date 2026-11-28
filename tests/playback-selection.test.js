@@ -17,18 +17,6 @@ const {createTesPlayAdapter}=await import(adapterUrl);
 const typesUrl=moduleUrl('../src/types.ts');
 const {mergePlexContinuity}=await import(moduleUrl('../src/plex-continuity.ts',{'./types':typesUrl}));
 
-test('temporary phone media resolves its authenticated descriptor instead of treating JSON as video', async t => {
-  const oldFetch=globalThis.fetch,oldLocation=globalThis.location;
-  globalThis.location={origin:'https://tesplay.test',href:'https://tesplay.test/'};
-  t.after(()=>{globalThis.fetch=oldFetch;if(oldLocation===undefined)delete globalThis.location;else globalThis.location=oldLocation;});
-  const requests=[];
-  globalThis.fetch=async input=>{requests.push(String(input));return Response.json({url:'/api/media/temporary-source',type:'hls'});};
-  const item={id:'remote-12345678-abcd-1234-1234-123456789abc',source:'Video link',type:'video',playbackUrl:'/api/remote/media/remote-12345678-abcd-1234-1234-123456789abc/playback'};
-  const playback=await resolvePlayback(item,{},new AbortController().signal,{audioLanguage:null,subtitleLanguage:null,subtitlesEnabled:false,qualityId:'auto'});
-  assert.deepEqual(requests,[item.playbackUrl]);
-  assert.equal(playback.url,'/api/media/temporary-source');assert.equal(playback.type,'hls');
-});
-
 test('playback settings are encoded independently and direct playback starts with automatic defaults',()=>{
   const item={id:'movie 1',type:'movie',connectionId:'server&1'};
   const selected=new URL(playbackPath(item,{audioTrackId:'plex-audio-62',qualityId:'720p',compatibility:true,subtitleTrackId:'off'}),'https://tesplay.test');

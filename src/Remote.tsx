@@ -134,7 +134,6 @@ export function PairRemote({
 }
 
 import RemoteConnect from "./RemoteConnect";
-import RemoteVideoSources from "./RemoteVideoSources";
 import RemoteNavigation from "./RemoteNavigation";
 import RemoteDrawer from "./RemoteDrawer";
 import type { RemoteTab } from "./RemoteNavigation";
@@ -751,12 +750,6 @@ export default function Remote({
                     : `${Math.round((volume ?? state?.volume ?? 1) * 100)}%`}
                 </output>
               </div>
-              <RemoteVideoSources
-                key={room}
-                roomId={room}
-                online={online}
-                onPlayed={() => setControlsOpen(true)}
-              />
               {item?.type === "episode" && (
                 <div className="cinema-episodes">
                   <Suspense fallback={<Busy label="Loading episode picker" />}>

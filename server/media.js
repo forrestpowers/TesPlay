@@ -422,7 +422,6 @@ export function createMediaService(ctx) {
       );
     if(req.session?.scope === 'remote' && item.kind !== 'artwork')
       throw providerError('This browser is authorized as a remote only.',403);
-    if (item.remoteRoomId) ctx.authorizeRemoteMedia(req, item);
     const connection = item.connectionId
       ? ctx.getConnection(req, item.connectionId)
       : null;
@@ -489,9 +488,6 @@ export function createMediaService(ctx) {
           if (previous && resources.has(previous.slice('/api/media/'.length))) return previous;
           const child = register(req, connection, {
             url,
-            remoteRoomId: item.remoteRoomId,
-            remoteHostSessionId: item.remoteHostSessionId,
-            remoteMediaId: item.remoteMediaId,
           });
           item.children.set(url, child);
           return child;
@@ -760,9 +756,6 @@ export function createMediaService(ctx) {
           if (previous && resources.has(previous.slice('/api/media/'.length))) return previous;
           const child = register(req, connection, {
             url,
-            remoteRoomId: item.remoteRoomId,
-            remoteHostSessionId: item.remoteHostSessionId,
-            remoteMediaId: item.remoteMediaId,
             hlsChild: true,
             parentToken: req.params.token,
             hlsSequence: manifest.includes('#EXT-X-BYTERANGE:') ? undefined : metadata?.sequence,

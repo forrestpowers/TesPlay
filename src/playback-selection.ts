@@ -34,7 +34,7 @@ export async function resolvePlayback(item: MediaItem, settings: PlaybackSetting
   if (!item.playbackUrl) playback = await api<Playback>(playbackPath(item,effective),undefined,undefined,signal);
   else {
     const id = youtubeId(item.playbackUrl);
-    const resolver = /^\/api\/remote\/media\/remote-[a-f0-9-]+\/playback$/.test(item.playbackUrl) ? item.playbackUrl.slice(4) : item.playbackUrl.startsWith('/api/radio/stream/') ? item.playbackUrl.slice(4).replace('/radio/stream/','/radio/playback/') : id ? `/youtube/resolve/${id}` : item.playbackUrl.startsWith('/api/youtube/resolve/') ? item.playbackUrl.slice(4) : null;
+    const resolver = id ? `/youtube/resolve/${id}` : item.playbackUrl.startsWith('/api/youtube/resolve/') ? item.playbackUrl.slice(4) : null;
     playback = resolver ? await api<Playback>(resolver,undefined,undefined,signal) : {url:item.playbackUrl,type:item.type==='audio'?'audio':/\.m3u8(?:[?#]|$)/i.test(item.playbackUrl)?'hls':'video',...(/\.ts(?:[?#]|$)/i.test(item.playbackUrl)?{streamKind:'continuous-ts' as const}:{})};
   }
   return {...playback,settings:effective,defaults:await preferencesRequest};

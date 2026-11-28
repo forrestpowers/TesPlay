@@ -680,8 +680,8 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     try {
       res.json({ categories: await iptvCategories(c, IPTV_KINDS, false, true) });
     } catch (error) {
-      // Cloudflare replaces gateway responses with HTML, hiding the provider's
-      // explanation. A failed draft is a setup error, not a TesPlay outage.
+      // A reverse proxy replaces gateway responses with its own page, hiding the
+      // provider's explanation. A failed draft is a setup error, not a TesPlay outage.
       if ([502, 503, 504].includes(error.status))
         throw Object.assign(providerError(`Could not load IPTV categories. ${error.message}`, 422), { code: 'IPTV_PROVIDER_UNAVAILABLE' });
       throw error;
@@ -1664,73 +1664,4 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     }),
   );
   googleAuth.registerRoutes(app, { connection, route });
-
-  app.get(
-    "/api/radio",
-    route(async (req, res) => {
-      const q = String(req.query.q || "").slice(0, 100);
-      const u = new URL(
-        q
-          ? "https://de1.api.radio-browser.info/json/stations/search"
-          : "https://de1.api.radio-browser.info/json/stations/topvote/60",
-      );
-      if (q)
-        u.search = new URLSearchParams({
-          name: q,
-          limit: "60",
-          hidebroken: "true",
-          order: "votes",
-          reverse: "true",
-        });
-      const data = await cached(`radio:${q}`, () => fetchData(u), 300);
-      const items = array(data)
-        .slice(0, 60)
-        .flatMap((x) => {
-          try {
-            validateRemoteUrl(x.url_resolved || x.url);
-            return [
-              {
-                id: x.stationuuid,
-                title: cleanText(x.name),
-                type: "audio",
-                source: "Radio",
-                subtitle: [x.country, x.codec].filter(Boolean).join(" · "),
-                poster: art(req, { config: {} }, x.favicon),
-                playbackUrl: `/api/radio/stream/${x.stationuuid}`,
-                category: x.tags,
-              },
-            ];
-          } catch {
-            return [];
-          }
-        });
-      res.json({ items });
-    }),
-  );
-  app.get(
-    ["/api/radio/stream/:stationId", "/api/radio/playback/:stationId"],
-    route(async (req, res) => {
-      if (
-        !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
-          req.params.stationId,
-        )
-      )
-        throw providerError("Invalid radio station.");
-      const data = await cached(
-        `station:${req.params.stationId}`,
-        () =>
-          fetchData(
-            `https://de1.api.radio-browser.info/json/stations/byuuid/${req.params.stationId}`,
-          ),
-        300,
-      );
-      const station = array(data)[0];
-      if (!station)
-        throw providerError("This radio station is no longer available.", 404);
-      const url = validateRemoteUrl(station.url_resolved || station.url);
-      const mediaUrl = media.register(req, null, { url: url.toString() });
-      if (req.path.startsWith('/api/radio/playback/')) return res.json({ url: mediaUrl, type: 'audio', isLive: true });
-      res.redirect(mediaUrl);
-    }),
-  );
 }

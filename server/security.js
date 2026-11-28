@@ -150,8 +150,7 @@ export function csrfProtection({ publicUrl, production }) {
   const publicOrigin = publicUrl ? new URL(publicUrl).origin : null;
   return (req, res, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
-    const videoChunk = req.method === "PUT" && /^\/remote\/media\/upload\/remote-[a-f0-9-]+$/.test(req.path) && req.is("application/octet-stream");
-    if (!req.is("application/json") && !videoChunk)
+    if (!req.is("application/json"))
       return next(httpError(415, "Send requests as application/json."));
     const origin = req.get("origin");
     const allowed = new Set([

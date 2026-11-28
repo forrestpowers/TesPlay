@@ -3,14 +3,13 @@ import {playbackBufferLimits} from './playback-buffer-limits';
 import { api, clearMediaError, recentMediaError, tesPlayFetch } from './api';
 import SutroIcon from "./SutroIcon";
 import LiveIndicator from "./LiveIndicator";
-import { Modal } from "./components";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import PlaybackStats from './PlaybackStats';
 import { carModeChannel, HALF_FRAME_RATE_KEY, PLAYBACK_STATS_KEY, readDevicePreference, writeCarModeOverride, writeDevicePreference, type CarModeHeight } from './device-preferences';
 import { LoaderCircle, Radio, ChevronRight, ChevronLeft, Captions, Minus, Plus, Gauge, Languages, SkipBack, SkipForward } from 'lucide-react';
-import { createTesPlayerEngine, probeMediaCapabilities, parseSubtitles, activeCuesAt } from '@canvas-stream-player/player';
+import { createTesPlayerEngine, probeMediaCapabilities } from '@canvas-stream-player/player';
 import { DEFAULT_PLAYER_POLICY } from '@canvas-stream-player/contracts';
-import type { PlayerEngine, PlayerSnapshot, PlayerCommand, PlayerSubtitleCue } from '@canvas-stream-player/contracts';
+import type { PlayerEngine, PlayerSnapshot, PlayerCommand } from '@canvas-stream-player/contracts';
 import type { MediaItem, Playback, PlayerPreferences } from './types';
 import { defaultPlayerPreferences, preferredSubtitleTrack } from './player-preferences';
 import { createTesPlayAdapter, TesPlaySourceError } from './tesplayer-adapter';
@@ -62,8 +61,6 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const subtitlePreferences=useRef<PlayerPreferences>(defaultPlayerPreferences);
   useEffect(()=>()=>clearTimeout(retryTimer.current),[]);
   const [scrub, setScrub] = useState<number | null>(null);
-  const [localCues, setLocalCues] = useState<PlayerSubtitleCue[]>([]);
-  const [localCaptions, setLocalCaptions] = useState(false);
   const surface=useRef<HTMLDivElement>(null);
   const controls=useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -76,7 +73,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     observer.observe(bar);
     return () => observer.disconnect();
   }, [remoteOnly]);
-  const [fullscreen,setFullscreen]=useState(false),[immersive,setImmersive]=useState(false),[settings,setSettings]=useState(false),[pasteCaptions,setPasteCaptions]=useState(false),[captionText,setCaptionText]=useState('');
+  const [fullscreen,setFullscreen]=useState(false),[immersive,setImmersive]=useState(false),[settings,setSettings]=useState(false);
   const [controlsVisible,setControlsVisible]=useState(true),[seekFeedback,setSeekFeedback]=useState<{side:'left'|'right';seconds:number;key:number}|null>(null);
   const hideTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),feedbackTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),lastTap=useRef<{time:number;side:string}>({time:0,side:''}),lastTouchSeek=useRef(0);
   const reveal=()=>{setControlsVisible(true);clearTimeout(hideTimer.current);hideTimer.current=setTimeout(()=>setControlsVisible(false),2500);};
@@ -93,7 +90,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   };
   useEffect(()=>{const remote=(e:Event)=>{if((e as CustomEvent).detail.command==='fullscreen')toggleFullscreen();};window.addEventListener('aperture:remote',remote);return()=>window.removeEventListener('aperture:remote',remote);},[immersive,remoteOnly]);
   const remoteReporter = useRef(onRemoteState); remoteReporter.current = onRemoteState;
-  useEffect(()=>{const state=remotePlayback(view, remoteOnly || fullscreen || immersive, localCaptions, localCues.length > 0, remoteOnly);remoteReporter.current?.(failed?{...state,phase:"error"}:state);},[snapshot,fullscreen,immersive,remoteOnly,localCaptions,localCues.length,failed]);
+  useEffect(()=>{const state=remotePlayback(view, remoteOnly || fullscreen || immersive, remoteOnly);remoteReporter.current?.(failed?{...state,phase:"error"}:state);},[snapshot,fullscreen,immersive,remoteOnly,failed]);
   useEffect(()=>{
     const remote=(event:Event)=>{
       if ((event as CustomEvent).detail.command !== 'captions') return;
@@ -101,11 +98,11 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
       if (state?.subtitleTracks.length) {
         const trackId=state.selectedSubtitleTrackId ? null : state.subtitleTracks[0].id;
         void engine.current?.dispatch({type:'select-subtitle-track',trackId}).catch(error);
-      } else if (localCues.length) setLocalCaptions(value=>!value);
+      }
     };
     window.addEventListener('aperture:remote',remote);
     return ()=>window.removeEventListener('aperture:remote',remote);
-  },[localCues.length]);
+  },[]);
   const playing = useRef(onPlaying); playing.current = onPlaying;
   const progress = useRef(onProgress), ended = useRef(onEnded), reportError = useRef(onError);
   progress.current = onProgress; ended.current = onEnded; reportError.current = onError;
@@ -146,7 +143,6 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     retryPending.current=false;
     adapterRef.current = null;
     setSnapshot(null); setBusy(true); setFailed(false); setMessage('Getting your stream ready');
-    setLocalCues([]); setLocalCaptions(false);
     const save = (completed = false, stopped = false) => {
       if (!active || !didPlay || didComplete) return;
       const state = timeline(active.getSnapshot());
@@ -262,7 +258,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     const now=performance.now();if(lastTap.current.side===side && now-lastTap.current.time<350){lastTouchSeek.current=now;skip(side);lastTap.current={time:0,side:''};}else lastTap.current={time:now,side};
   };
   const chooseSubtitle=async(trackId:string|null)=>{
-    const track=snapshot?.subtitleTracks.find(s=>s.id===trackId);setLocalCaptions(false);setSubtitleMenu(false);
+    const track=snapshot?.subtitleTracks.find(s=>s.id===trackId);setSubtitleMenu(false);
     try{await engine.current?.dispatch({type:'select-subtitle-track',trackId});const value={subtitleLanguage:track?.language||subtitlePreferences.current.subtitleLanguage,subtitlesEnabled:!!trackId};subtitlePreferences.current=await api<PlayerPreferences>('/player/preferences',value,'PATCH');}catch(reason){error(reason);}
   };
   const subtitleToggle=()=>{setSubtitleMenu(open=>!open);setAudioMenu(false);setSettings(false);};
@@ -270,7 +266,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const cycleQuality=()=>{const sequence=['auto',...qualities.map(q=>q.id)];void dispatch({type:'select-quality',qualityId:sequence[(sequence.indexOf(snapshot?.selectedQualityId||'auto')+1)%sequence.length]});};
   const audioUnlockRequired = !!snapshot && snapshot.audioTracks.length > 0 && !snapshot.audioUnlocked;
   const showControls=controlsVisible || snapshot?.phase!=='playing' || audioUnlockRequired || busy || settings || subtitleMenu || audioMenu;
-  const captions = localCaptions ? activeCuesAt(localCues, position) : snapshot?.activeSubtitleCues || [];
+  const captions = snapshot?.activeSubtitleCues || [];
   return <div ref={surface} className={`tesplayer sutro-player ${immersive?'immersive':''} ${!remoteOnly&&showControls?'controls-visible':''}`} aria-label="TesPlayer" onPointerMove={remoteOnly?undefined:reveal} onKeyDownCapture={event=>{if(remoteOnly)return;reveal();if(event.key==='Escape' && immersive){event.preventDefault();event.stopPropagation();setImmersive(false);}}} onKeyDown={(event) => {
     if(remoteOnly)return;
     if (!(event.target instanceof HTMLElement) || event.target.closest('input, select, button')) return;
@@ -312,7 +308,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
         </div>
         <div className="tesplayer-secondary-controls">
           {canTranscode&&<button className={`player-mode-toggle ${!plexCompatibility?'enabled':''}`} role="switch" aria-checked={!plexCompatibility} aria-label="Auto playback" title={plexCompatibility?'Compatibility mode':'Automatic playback'} onClick={()=>onCompatibilityChange(!plexCompatibility)}><span className="toggle-track"><i/></span><span>{plexCompatibility?'Compatibility':'Auto'}</span></button>}
-          <button className={`icon-button ${localCaptions||snapshot?.selectedSubtitleTrackId?'active':''}`} aria-label="Choose subtitles" aria-expanded={subtitleMenu} disabled={!snapshot} onClick={subtitleToggle}><Captions size={22}/></button>
+          <button className={`icon-button ${snapshot?.selectedSubtitleTrackId?'active':''}`} aria-label="Choose subtitles" aria-expanded={subtitleMenu} disabled={!snapshot} onClick={subtitleToggle}><Captions size={22}/></button>
           <button className={`icon-button ${audioMenu?'active':''}`} aria-label="Choose audio track" aria-expanded={audioMenu} disabled={!snapshot} onClick={()=>{setAudioMenu(open=>!open);setSubtitleMenu(false);setSettings(false);}}><Languages size={22}/></button>
           <button className="icon-button" aria-label="Player settings" aria-expanded={settings} onClick={()=>{setSettings(value=>!value);setSubtitleMenu(false);setAudioMenu(false);}}><SutroIcon name="settings"/></button>
           <button className="icon-button" aria-label={fullscreen||immersive?'Exit fullscreen':'Fullscreen video'} aria-pressed={fullscreen||immersive} onClick={toggleFullscreen}><SutroIcon name={fullscreen||immersive?'exitFullscreen':'fullscreen'}/></button>
@@ -328,14 +324,11 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
           {(playback.carMode || carModeHeight)&&<div className="player-setting-row" title="The server converts this channel or title to a smaller size at 30 fps or less: smoother on a car screen and lighter on mobile data (720p about 3 Mbps, 480p about 1.3 Mbps)."><span>Car mode</span><div className="player-track-choices" role="group" aria-label="Car mode">{([[null,'Off'],[720,'720p'],[480,'480p']] as [CarModeHeight|null,string][]).map(([height,label])=><button key={label} className="player-choice" aria-pressed={carModeHeight===height} aria-label={height?`Car mode ${label}`:'Car mode off'} disabled={busy} onClick={()=>chooseCarMode(height)}>{label}</button>)}</div></div>}
           <div className="player-setting-row"><span>Limit to 30 fps</span><button className={`player-mode-toggle ${halfFrameRate?'enabled':''}`} role="switch" aria-checked={halfFrameRate} aria-label="Limit 60 fps video to 30 fps" title="Shows every other frame of 50/60 fps video. Can look smoother on slower screens." disabled={busy} onClick={()=>{const value=!halfFrameRate;writeDevicePreference(HALF_FRAME_RATE_KEY,value);if(vod&&view)vodSeek.current?.(view.positionSeconds);else if(!isLive&&snapshot)restartAt.current=snapshot.positionSeconds;setHalfFrameRate(value);}}><span className="toggle-track"><i/></span><span>{halfFrameRate?'On':'Off'}</span></button></div>
           <div className="player-setting-row"><span>Playback stats</span><button className={`player-mode-toggle ${showStats?'enabled':''}`} role="switch" aria-checked={showStats} aria-label="Show playback stats" onClick={()=>{const value=!showStats;writeDevicePreference(PLAYBACK_STATS_KEY,value);setShowStats(value);}}><span className="toggle-track"><i/></span><span>{showStats?'On':'Off'}</span></button></div>
-          <button className="text-button" onClick={()=>{setPasteCaptions(true);setSettings(false);}}>Paste subtitles</button>
-          <button className="text-button" disabled={!snapshot} onClick={()=>void dispatch({type:'set-rotation',degrees:(((snapshot?.rotationDegrees||0)+90)%360) as 0|90|180|270})}>Rotate picture</button>
           <button className="text-button" disabled={!snapshot} onClick={()=>void dispatch({type:'set-aspect-mode',mode:snapshot?.aspectMode==='fill'?'fit':'fill'})}>{snapshot?.aspectMode==='fill'?'Fit picture':'Fill picture'}</button>
 
         </div>}
       {!remoteOnly&&audioMenu&&<div className="tesplayer-settings subtitle-choices" role="dialog" aria-label="Audio tracks"><strong>Audio</strong>{snapshot?.audioTracks.length?snapshot.audioTracks.map(track=><button className="player-choice" key={track.id} disabled={busy} aria-pressed={snapshot.selectedAudioTrackId===track.id} onClick={()=>{setAudioMenu(false);void dispatch({type:'select-audio-track',trackId:track.id});}}>{track.label||track.language||'Audio'}</button>):<p>This source supplies its default audio track only.</p>}<button className="text-button" onClick={()=>setAudioMenu(false)}>Close</button></div>}
-      {!remoteOnly&&subtitleMenu&&<div className="tesplayer-settings subtitle-choices" role="dialog" aria-label="Subtitle languages"><strong>Subtitles</strong><button className="player-choice" aria-pressed={!localCaptions&&!snapshot?.selectedSubtitleTrackId} onClick={()=>void chooseSubtitle(null)}>Off</button>{snapshot?.subtitleTracks.length?snapshot.subtitleTracks.map(track=><button className="player-choice" key={track.id} aria-pressed={snapshot.selectedSubtitleTrackId===track.id} onClick={()=>void chooseSubtitle(track.id)}>{track.label}</button>):<p>No subtitle tracks available for this title.</p>}{!!localCues.length&&<button className="player-choice" onClick={()=>{setLocalCaptions(true);setSubtitleMenu(false);}}>Your subtitles</button>}<button className="text-button" onClick={()=>{setPasteCaptions(true);setSubtitleMenu(false);}}>Paste subtitles</button><button className="text-button" onClick={()=>setSubtitleMenu(false)}>Close</button></div>}
+      {!remoteOnly&&subtitleMenu&&<div className="tesplayer-settings subtitle-choices" role="dialog" aria-label="Subtitle languages"><strong>Subtitles</strong><button className="player-choice" aria-pressed={!snapshot?.selectedSubtitleTrackId} onClick={()=>void chooseSubtitle(null)}>Off</button>{snapshot?.subtitleTracks.length?snapshot.subtitleTracks.map(track=><button className="player-choice" key={track.id} aria-pressed={snapshot.selectedSubtitleTrackId===track.id} onClick={()=>void chooseSubtitle(track.id)}>{track.label}</button>):<p>No subtitle tracks available for this title.</p>}<button className="text-button" onClick={()=>setSubtitleMenu(false)}>Close</button></div>}
     </div>
-    {pasteCaptions&&<Modal title="Add subtitles" onClose={()=>setPasteCaptions(false)}><p>Paste VTT or SRT subtitle text here.</p><textarea aria-label="Subtitle text" rows={8} maxLength={2*1024*1024} value={captionText} onChange={e=>setCaptionText(e.target.value)}/><button className="button primary" onClick={()=>{const cues=parseSubtitles(captionText,captionText.trimStart().startsWith('WEBVTT')?'webvtt':'srt');setLocalCues(cues);setLocalCaptions(true);setPasteCaptions(false);void dispatch({type:'select-subtitle-track',trackId:null});}}>Use subtitles</button></Modal>}
   </div>;
 }

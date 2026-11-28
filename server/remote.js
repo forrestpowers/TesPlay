@@ -1,17 +1,15 @@
 import { randomInt } from "node:crypto";
 import { rateLimit } from "express-rate-limit";
 import { randomToken, httpError, hashToken, constantTimeEqual } from "./security.js";
-import { registerRemoteMediaRoutes } from "./remote-media.js";
 
 const PAIR_LIFETIME = 5 * 60 * 1000;
 
 export function registerRemoteRoutes(
   app,
-  { enabled = true, store, getProfileId, validateRemoteItem, requireAuth, startRemoteSession, authStatus, dataDir, media, mediaDependencies },
+  { enabled = true, store, getProfileId, validateRemoteItem, requireAuth, startRemoteSession, authStatus },
 ) {
   const rooms = new Map();
   const codes = new Map();
-  let remoteMedia;
   const pairLimit = rateLimit({
     windowMs: 60_000,
     limit: 10,
@@ -37,7 +35,6 @@ export function registerRemoteRoutes(
   });
 
   function removeRoom(room) {
-    remoteMedia?.discardRoom(room.id);
     for (const [code, challenge] of codes) if (challenge.roomId === room.id) codes.delete(code);
     rooms.delete(room.id);
     for (const client of room.clients) client.res.end();
@@ -81,7 +78,6 @@ export function registerRemoteRoutes(
     res.json({...authStatus(req),roomId:room.id});
   });
   app.use('/api/remote', requireAuth);
-  remoteMedia = registerRemoteMediaRoutes(app, { dataDir, media, findRoom, requireEnabled, dependencies: mediaDependencies });
   app.post('/api/remote/screen',requireEnabled,full,(req,res)=>{const room=hydrate(store.ensureScreen(req));res.json({roomId:room.id});});
   app.post('/api/remote/screen/disconnect',requireEnabled,full,(req,res)=>{
     const room=findRoom(req,req.body?.roomId);
@@ -330,10 +326,7 @@ export function registerRemoteRoutes(
   });
 
   return {
-    validateMediaItem: (req, item) => remoteMedia.validateItem(req, item),
-    authorizeMedia: (req, resource) => remoteMedia.authorize(req, resource),
     close() {
-      remoteMedia.close();
       for (const room of [...rooms.values()]) removeRoom(room);
     },
     closeSession(sessionId) {

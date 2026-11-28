@@ -51,8 +51,6 @@ export const idleRemotePlayback: RemotePlayback = {
 export function remotePlayback(
   snapshot: PlayerSnapshot | null,
   fullscreen: boolean,
-  localCaptions: boolean,
-  localAvailable: boolean,
   fullscreenLocked = false,
 ): RemotePlayback {
   if (!snapshot) return { ...idleRemotePlayback, phase: "loading", fullscreen, fullscreenLocked };
@@ -70,7 +68,7 @@ export function remotePlayback(
       snapshot.audioTracks.length > 0 && !snapshot.audioUnlocked,
     fullscreen,
     fullscreenLocked,
-    subtitlesAvailable: snapshot.subtitleTracks.length > 0 || localAvailable,
-    subtitlesEnabled: !!snapshot.selectedSubtitleTrackId || localCaptions,
+    subtitlesAvailable: snapshot.subtitleTracks.length > 0,
+    subtitlesEnabled: !!snapshot.selectedSubtitleTrackId,
   };
 }

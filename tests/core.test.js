@@ -698,7 +698,7 @@ test("production serves SPA entry and assets beneath hidden ancestors with canva
     );
     assert.match(
       response.headers.get("content-security-policy"),
-      /script-src 'self' blob: 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com 'nonce-[^']+';/,
+      /script-src 'self' blob: 'wasm-unsafe-eval' 'nonce-[^']+';/,
     );
     assert.match(response.headers.get('content-security-policy'), /frame-src 'none'/);
     assert.match(await response.text(), /Aperture static smoke/);

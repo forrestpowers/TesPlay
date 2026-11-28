@@ -817,8 +817,7 @@ test("Drive OAuth validates state/session, uses PKCE, refreshes tokens, filters 
   );
 });
 
-test("YouTube searches stay server-side and saved radio items use a durable station endpoint", async (t) => {
-  const stationId = "12345678-1234-1234-1234-123456789abc";
+test("YouTube searches stay server-side", async (t) => {
   const f = await fixture(t, {
     resolveYouTube: async (id) => {
       assert.equal(id, 'abcdefghijk');
@@ -843,14 +842,7 @@ test("YouTube searches stay server-side and saved radio items use a durable stat
           nextPageToken: "yt-next",
         };
       }
-      return [
-        {
-          stationuuid: stationId,
-          name: "Radio",
-          url_resolved: "https://radio.example/audio.mp3",
-          codec: "MP3",
-        },
-      ];
+      throw new Error(`unexpected request ${u.hostname}`);
     },
   });
   const id = f.add("youtube", { apiKey: "youtube-api-secret" });
@@ -867,16 +859,6 @@ test("YouTube searches stay server-side and saved radio items use a durable stat
   assert.match(video.url, /^\/api\/media\//);
   assert.match(video.audioUrl, /^\/api\/media\//);
   assert.ok(!JSON.stringify(video).includes('private'));
-  const radio = await (await f.request("/api/radio")).json();
-  assert.equal(radio.items[0].playbackUrl, `/api/radio/stream/${stationId}`);
-  const stream = await f.request(radio.items[0].playbackUrl, {
-    redirect: "manual",
-  });
-  assert.equal(stream.status, 302);
-  const radioPlayback = await (await f.request(`/api/radio/playback/${stationId}`)).json();
-  assert.equal(radioPlayback.type, 'audio');
-  assert.match(radioPlayback.url, /^\/api\/media\//);
-  assert.match(stream.headers.get("location"), /^\/api\/media\//);
 });
 
 test("IPTV offers live channels only unless on-demand titles are switched on", async (t) => {
