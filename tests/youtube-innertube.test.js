@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
 import {
-  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, audioRank, relativeDate, clockDuration, rawTvPage, TV_SCOPES, TV_PLAYER_CLIENT, SIGN_IN_REQUIRED,
+  createInnertubeService, registerInnertubeRoutes, videoItem, channelItem, playlistItem, chooseStreams, pickVideo, videoQualities, youtubeHeight, audioRank, relativeDate, clockDuration, rawTvPage, TV_SCOPES, TV_PLAYER_CLIENT, SIGN_IN_REQUIRED,
 } from '../server/youtube-innertube.js';
 
 const NOW = Date.parse('2026-11-23T12:00:00Z');
@@ -102,6 +102,47 @@ test('chooseStreams picks the best H.264 track at or below 1080p with AAC itag 1
   const surround = streaming();
   surround.adaptive_formats.push({ ...format(258, 'audio/mp4; codecs="mp4a.40.2"'), audio_channels: 6, bitrate: 384000 });
   assert.equal(chooseStreams(surround).audio.itag, 140, 'stereo is preferred over a louder 5.1 track');
+});
+
+// A 60 fps gaming upload: 1080p and 720p only at 60 fps, smaller sizes at 30 fps.
+const sizes = () => ({ adaptive_formats: [
+  format(299, 'video/mp4; codecs="avc1.64002a"', { height: 1080, fps: 60 }), format(298, 'video/mp4; codecs="avc1.4d4020"', { height: 720, fps: 60 }),
+  format(135, 'video/mp4; codecs="avc1.4d401f"', { height: 480, fps: 30 }), format(134, 'video/mp4; codecs="avc1.4d401e"', { height: 360, fps: 30 }),
+  format(303, 'video/webm; codecs="vp9"', { height: 1080, fps: 60 }), format(401, 'video/mp4; codecs="av01.0.12M.08"', { height: 2160, fps: 60 }),
+  format(140, 'audio/mp4; codecs="mp4a.40.2"'),
+] });
+
+test('a chosen YouTube height plays that H.264 size, even at 60 fps, and the sizes offered are listed tallest first', () => {
+  const data = sizes();
+  assert.deepEqual(chooseStreams(data).qualities, [{ height: 1080, fps: 60 }, { height: 720, fps: 60 }, { height: 480, fps: 30 }, { height: 360, fps: 30 }], 'H.264 only: no VP9 or AV1 sizes');
+  assert.equal(chooseStreams(data).video.itag, 135, 'automatic keeps preferring 30 fps on a car screen');
+  assert.equal(chooseStreams(data, { height: 1080 }).video.itag, 299);
+  assert.equal(chooseStreams(data, { height: 720 }).video.itag, 298);
+  assert.equal(chooseStreams(data, { height: 360 }).video.itag, 134);
+  assert.equal(chooseStreams(data, { height: 240 }), null);
+  // A size the video lacks plays the tallest below it.
+  const plain = streaming([1080, 480]);
+  assert.equal(pickVideo(plain.adaptive_formats.filter(f => /avc1/.test(f.mime_type)), { height: 720 }).height, 480);
+  // Both frame rates at one height: the 30 fps track plays, so the size is listed as 30 fps.
+  assert.deepEqual(videoQualities([{ height: 1080, fps: 60 }, { height: 1080, fps: 30 }]), [{ height: 1080, fps: 30 }]);
+  assert.equal(youtubeHeight('720'), 720); assert.equal(youtubeHeight('2160'), undefined); assert.equal(youtubeHeight('auto'), undefined); assert.equal(youtubeHeight(undefined), undefined);
+});
+
+test('each YouTube size resolves and is remembered on its own', async () => {
+  const f = fixture({ config: { tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000 }, info: () => ({ playability_status: { status: 'OK' }, basic_info: { title: 'Speedrun', is_live: false }, streaming_data: sizes() }) });
+  const c = f.connections.get('c1');
+  const auto = await f.service.resolve(f.req, c, 'aqz-KE-bpKQ');
+  assert.deepEqual(auto.picture, { height: 480, fps: 30 });
+  assert.equal(auto.qualities.length, 4);
+  const tall = await f.service.resolve(f.req, c, 'aqz-KE-bpKQ', undefined, { height: 1080 });
+  assert.deepEqual(tall.picture, { height: 1080, fps: 60 });
+  assert.equal(tall.video.url, 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=299&n=ok');
+  assert.equal(await f.service.resolve(f.req, c, 'aqz-KE-bpKQ', undefined, { height: 1080 }), tall, 'reopening at the same size reuses its URLs');
+  assert.equal(await f.service.resolve(f.req, c, 'aqz-KE-bpKQ'), auto);
+  assert.equal(f.created[0].calls.length, 2, 'one YouTube request per size');
+  f.service.forget(c, 'aqz-KE-bpKQ');
+  await f.service.resolve(f.req, c, 'aqz-KE-bpKQ', undefined, { height: 1080 });
+  assert.equal(f.created[0].calls.length, 3, 'forgetting a video drops every size of it');
 });
 
 function fixture({ config = {}, info, fetchResponses = [], probe = async () => true, visitors = ['visitor-1', 'visitor-2'], potProviderUrl = '', sabr = null, sabrMode = 'auto', liveSession } = {}) {

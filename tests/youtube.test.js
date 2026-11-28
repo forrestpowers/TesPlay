@@ -88,3 +88,20 @@ test('resolver bounds simultaneous jobs and releases slots after completion', as
   await Promise.all([first, second]);
   const third = resolver(id); releases[0](); await third;
 });
+
+test('a chosen picture size caps the yt-dlp format and reaches the internal resolver', async () => {
+  let args;
+  const local = createYouTubeResolver({ enabled: true, resolverUrl: '', run: async (_binary, given) => { args = given; return { stdout: output() }; } });
+  await local(id, undefined, { height: 480 });
+  assert.match(args[args.indexOf('-f') + 1], /^bv\[protocol\^=m3u8\]\[height<=480\]/);
+  assert.ok(!args[args.indexOf('-f') + 1].includes('1080'));
+  await local(id);
+  assert.match(args[args.indexOf('-f') + 1], /\[height<=1080\]/, 'automatic stays at 1080p');
+  const oldFetch = globalThis.fetch, urls = [];
+  globalThis.fetch = async (url) => { urls.push(String(url)); return Response.json({ isLive: false, video: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=135', headers: {} }, audio: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=140', headers: {} } }); };
+  try {
+    const remote = createYouTubeResolver({ resolverUrl: 'http://youtube:4180' });
+    await remote(id, undefined, { height: 720 }); await remote(id);
+  } finally { globalThis.fetch = oldFetch; }
+  assert.deepEqual(urls, [`http://youtube:4180/resolve/${id}?height=720`, `http://youtube:4180/resolve/${id}`]);
+});

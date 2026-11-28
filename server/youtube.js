@@ -31,11 +31,15 @@ export function createYouTubeResolver({ binary = process.env.YT_DLP_PATH || 'yt-
   // bgutil-ytdlp-pot-provider plugin: proof-of-origin tokens from the shared provider service.
   const potArgs = potProviderUrl ? ['--extractor-args', `youtubepot-bgutilhttp:base_url=${potProviderUrl.replace(/\/$/, '')}`] : [];
   let active = 0;
-  return async (input, signal) => {
+  return async (input, signal, { height } = {}) => {
     const id = validateYouTubeId(input);
+    // The tallest picture to ask for: a size chosen in the player, otherwise 1080p.
+    const ceiling = [1080, 720, 480, 360, 240, 144].includes(Number(height)) ? Number(height) : 1080;
     if (resolverUrl) {
       try {
-        const response = await fetch(new URL(`/resolve/${id}`, resolverUrl), { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(95000)]) : AbortSignal.timeout(95000) });
+        const address = new URL(`/resolve/${id}`, resolverUrl);
+        if (ceiling !== 1080) address.searchParams.set('height', String(ceiling));
+        const response = await fetch(address, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(95000)]) : AbortSignal.timeout(95000) });
         if (!response.ok) throw providerError(response.status === 429 ? 'YouTube is preparing another video. Try again in a moment.' : 'YouTube could not prepare this video. Try another video or update the resolver.', response.status === 429 ? 429 : 502);
         const resolved = await response.json();
         // Revalidate the internal resolver response before issuing any media proxy URLs.
@@ -56,7 +60,7 @@ export function createYouTubeResolver({ binary = process.env.YT_DLP_PATH || 'yt-
       const { stdout } = await run(binary, [
         '--ignore-config', '--no-playlist', '--skip-download', '--print', streamTemplate, '--no-warnings', '--no-progress', '--no-cache-dir',
         '--socket-timeout', '15', '--retries', '1', '--extractor-retries', '1', '--js-runtimes', `node:${process.execPath}`, ...potArgs,
-        '-f', 'bv[protocol^=m3u8][height<=1080][vcodec^=avc1]+ba[protocol^=m3u8]/bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=1080][ext=mp4]',
+        '-f', `bv[protocol^=m3u8][height<=${ceiling}][vcodec^=avc1]+ba[protocol^=m3u8]/bv*[height<=${ceiling}][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=${ceiling}][ext=mp4]`,
         '--', `https://www.youtube.com/watch?v=${id}`,
       ], { timeout: 90000, maxBuffer: 8 * 1024 * 1024, signal, windowsHide: true });
       const compact = JSON.parse(stdout);

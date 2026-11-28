@@ -6,11 +6,12 @@ import LiveIndicator from "./LiveIndicator";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import PlaybackStats from './PlaybackStats';
 import { carModeChannel, HALF_FRAME_RATE_KEY, PLAYBACK_STATS_KEY, readDevicePreference, writeCarModeOverride, writeDevicePreference, type CarModeHeight } from './device-preferences';
+import { writeYouTubeHeight } from './playback-selection';
 import { LoaderCircle, Radio, ChevronRight, ChevronLeft, Captions, Minus, Plus, Gauge, Languages, SkipBack, SkipForward } from 'lucide-react';
 import { createTesPlayerEngine, probeMediaCapabilities } from '@canvas-stream-player/player';
 import { DEFAULT_PLAYER_POLICY } from '@canvas-stream-player/contracts';
 import type { PlayerEngine, PlayerSnapshot, PlayerCommand } from '@canvas-stream-player/contracts';
-import type { MediaItem, Playback, PlayerPreferences } from './types';
+import type { MediaItem, Playback, PlayerPreferences, YouTubeQuality } from './types';
 import { defaultPlayerPreferences, preferredSubtitleTrack } from './player-preferences';
 import { createTesPlayAdapter, TesPlaySourceError } from './tesplayer-adapter';
 import { registerAacMainRelabelDecoder } from './aac-main-decoder';
@@ -21,6 +22,8 @@ const time = (seconds: number) => {
   return whole >= 3600 ? `${Math.floor(whole / 3600)}:${String(Math.floor(whole / 60) % 60).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}` : `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 };
 const INITIAL_MESSAGE = 'Press play to begin';
+/** 1080p60, 720p, 480p… */
+const sizeLabel = (size: Pick<YouTubeQuality, 'fps'> & { height: number | null }) => `${size.height}p${size.fps > 31 ? '60' : ''}`;
 export default function TesPlayer({ playback, item, resume, plexCompatibility, canTranscode, onCompatibilityChange, onRetry, onVodSeek, getAudioContext, autoStart, onProgress, onEnded, onPlaying, onError, onRemoteState, previous, next, onNavigate, remoteOnly = false }: {
   playback: Playback; item: MediaItem; resume: number; plexCompatibility: boolean; canTranscode: boolean; onCompatibilityChange:(value:boolean)=>void; onRetry:()=>void;
   /** Restart a converted movie or episode at this position in the title. */
@@ -50,6 +53,10 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const carModeHeight: CarModeHeight | null = playback.compatibility === 'video' || (playback.compatibility === 'vod' && playback.carModeHeight) ? (playback.carModeHeight === 480 ? 480 : 720) : null;
   // Live channels restart at the live edge; a movie or episode carries on from where it is.
   const chooseCarMode = (height: CarModeHeight | null) => { if (height === carModeHeight) return; writeCarModeOverride(carModeChannel(item), height ?? 'off'); setSettings(false); if (item.type === 'live') freshRetry.current(); else vodSeek.current?.(view?.positionSeconds ?? 0); };
+  // YouTube picture sizes, served straight from YouTube: the choice is kept on this screen for
+  // later videos, and this one reopens at the same place (a live broadcast at its live edge).
+  const youtubeSizes = playback.provider === 'youtube' ? playback.youtubeQualities || [] : [];
+  const chooseYouTubeHeight = (height: number | null) => { if (height === (playback.youtubeHeight ?? null)) return; writeYouTubeHeight(height); setSettings(false); freshRetry.current(); };
   const restartAt = useRef<number | null>(null);
   const getEngineSnapshot = useCallback(() => engine.current?.getSnapshot() ?? null, []);
   const [message, setMessage] = useState(INITIAL_MESSAGE);
@@ -318,7 +325,8 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     </div>}
       {!remoteOnly&&settings&&<div className="tesplayer-settings" role="dialog" aria-label="Player settings">
           <div className="player-settings-heading"><strong>Settings</strong><button className="text-button" aria-label="Close player settings" onClick={()=>setSettings(false)}>Close</button></div>
-          <div className="player-setting-row"><span>Quality</span><button className="player-choice" aria-label="Cycle video quality" disabled={!qualities.length||busy} onClick={cycleQuality}><Gauge size={18}/>{snapshot?.qualities.find(q=>q.id===snapshot.selectedQualityId)?.label||'Auto'}</button></div>
+          {youtubeSizes.length ? <div className="player-setting-row" title="Sizes YouTube offers for this video. Taller looks sharper and uses more data; 60 fps sizes take more work to show."><span>Resolution</span><div className="player-track-choices" role="group" aria-label="YouTube resolution"><button className="player-choice" aria-pressed={!playback.youtubeHeight} disabled={busy} onClick={()=>chooseYouTubeHeight(null)}>{!playback.youtubeHeight&&playback.youtubePicture?.height?`Auto · ${sizeLabel(playback.youtubePicture)}`:'Auto'}</button>{youtubeSizes.map(size=><button key={size.height} className="player-choice" aria-pressed={playback.youtubeHeight===size.height} aria-label={`${size.upTo?'Up to ':''}${sizeLabel(size)}`} disabled={busy} onClick={()=>chooseYouTubeHeight(size.height)}>{sizeLabel(size)}</button>)}</div></div>
+            : <div className="player-setting-row"><span>Quality</span><button className="player-choice" aria-label="Cycle video quality" disabled={!qualities.length||busy} onClick={cycleQuality}><Gauge size={18}/>{snapshot?.qualities.find(q=>q.id===snapshot.selectedQualityId)?.label||'Auto'}</button></div>}
           <div className="player-setting-row"><span>Speed</span><div className="player-stepper"><button aria-label="Decrease playback speed" disabled={!snapshot||snapshot.isLive||busy||(snapshot.playbackRate||1)<=.25} onClick={()=>void dispatch({type:'set-rate',rate:Math.max(.25,(snapshot?.playbackRate||1)-.25)})}><Minus size={18}/></button><output>{snapshot?.playbackRate||1}×</output><button aria-label="Increase playback speed" disabled={!snapshot||snapshot.isLive||busy||(snapshot.playbackRate||1)>=2} onClick={()=>void dispatch({type:'set-rate',rate:Math.min(2,(snapshot?.playbackRate||1)+.25)})}><Plus size={18}/></button></div></div>
           {(snapshot?.audioTracks.length||0)>1&&<div className="player-setting-row"><span>Audio</span><div className="player-track-choices">{snapshot?.audioTracks.map(track=><button className="player-choice" aria-pressed={snapshot.selectedAudioTrackId===track.id} key={track.id} disabled={busy} onClick={()=>void dispatch({type:'select-audio-track',trackId:track.id})}><Languages size={16}/>{track.label}</button>)}</div></div>}
           {(playback.carMode || carModeHeight)&&<div className="player-setting-row" title="The server converts this channel or title to a smaller size at 30 fps or less: smoother on a car screen and lighter on mobile data (720p about 3 Mbps, 480p about 1.3 Mbps)."><span>Car mode</span><div className="player-track-choices" role="group" aria-label="Car mode">{([[null,'Off'],[720,'720p'],[480,'480p']] as [CarModeHeight|null,string][]).map(([height,label])=><button key={label} className="player-choice" aria-pressed={carModeHeight===height} aria-label={height?`Car mode ${label}`:'Car mode off'} disabled={busy} onClick={()=>chooseCarMode(height)}>{label}</button>)}</div></div>}

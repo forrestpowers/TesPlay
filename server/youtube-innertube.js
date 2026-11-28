@@ -158,18 +158,52 @@ export function rawTvPage(data) {
   return { tiles, continuation: typeof continuation === 'string' && continuation.length < 4096 ? continuation : null };
 }
 
-/** Choose a progressive H.264 video stream at or below the ceiling plus an AAC audio stream. */
-export function chooseStreams(streamingData, { maxHeight = 1080 } = {}) {
+/** Picture heights a viewer can ask for. YouTube offers H.264 up to 1080p; taller sizes are VP9 or AV1 only. */
+export const YOUTUBE_HEIGHTS = [1080, 720, 480, 360, 240, 144];
+/** A requested height, or undefined for the server's automatic choice. */
+export function youtubeHeight(value) {
+  const height = Number(value);
+  return YOUTUBE_HEIGHTS.includes(height) ? height : undefined;
+}
+const fps = f => f.fps || 30;
+/**
+ * Pick the H.264 video track. Automatic is like the YouTube TV app on a car screen: 30 fps
+ * tracks before 60 fps ones (half the decode work on the Tesla's MCU), then the tallest at or
+ * below the ceiling. A chosen height plays that height when the video has it (at 60 fps when
+ * that is all it offers), otherwise the tallest below it.
+ */
+export function pickVideo(videos, { maxHeight = 1080, height } = {}) {
+  const rank = (a, b) => Number(fps(a) > 31) - Number(fps(b) > 31) || (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0);
+  if (height) {
+    const exact = videos.filter(f => f.height === height).sort(rank)[0];
+    if (exact) return exact;
+    maxHeight = height;
+  }
+  return videos.filter(f => (f.height || 0) <= maxHeight).sort(rank)[0];
+}
+/** The H.264 sizes a video offers, tallest first, with the frame rate each would play at. */
+export function videoQualities(videos) {
+  const byHeight = new Map();
+  for (const f of videos) {
+    if (!YOUTUBE_HEIGHTS.includes(f.height)) continue;
+    const known = byHeight.get(f.height);
+    // The player plays the 30 fps track of a height when there is one.
+    if (!known || (known > 31 && fps(f) <= 31)) byHeight.set(f.height, fps(f));
+  }
+  return [...byHeight].sort((a, b) => b[0] - a[0]).map(([height, rate]) => ({ height, fps: rate > 31 ? 60 : 30 }));
+}
+const describe = video => ({ height: video.height || null, fps: fps(video) > 31 ? 60 : 30 });
+
+/** Choose a progressive H.264 video stream (see pickVideo) plus an AAC audio stream. */
+export function chooseStreams(streamingData, { maxHeight = 1080, height } = {}) {
   const formats = [...(streamingData?.adaptive_formats || []), ...(streamingData?.formats || [])].filter(f => f && typeof f.mime_type === 'string' && !f.drm_families?.length && !f.is_type_otf);
-  // Like the YouTube TV app on a car screen: 30 fps tracks before 60 fps ones (half the decode
-  // work on the Tesla's MCU), then the tallest at or below the ceiling.
-  const videos = formats.filter(f => f.has_video && !f.has_audio && /avc1/i.test(f.mime_type) && (f.height || 0) <= maxHeight && (f.url || f.signature_cipher || f.cipher))
-    .sort((a, b) => Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0));
+  const h264 = formats.filter(f => f.has_video && !f.has_audio && /avc1/i.test(f.mime_type) && (f.url || f.signature_cipher || f.cipher));
+  const video = pickVideo(h264, { maxHeight, height });
   // Videos with dubs carry several AAC tracks; the original language comes first, then the
   // track YouTube marks default, never auto-dubbed, described or DRC variants.
   const audios = formats.filter(f => f.has_audio && !f.has_video && /mp4a/i.test(f.mime_type) && (f.url || f.signature_cipher || f.cipher) && !f.is_descriptive && !f.is_auto_dubbed && (f.audio_channels || 2) <= 2)
     .sort((a, b) => audioRank(a) - audioRank(b) || processed(a) - processed(b) || (b.bitrate || 0) - (a.bitrate || 0));
-  return videos[0] && audios[0] ? { video: videos[0], audio: audios[0] } : null;
+  return video && audios[0] ? { video, audio: audios[0], qualities: videoQualities(h264) } : null;
 }
 /** YouTube lists each soundtrack three times: plain, with dynamic range compression and with voice boost. Plain sounds best. */
 export const processed = format => ((format.is_drc ?? format.isDrc) ? 1 : 0) + ((format.is_vb ?? format.isVb) ? 1 : 0);
@@ -520,8 +554,8 @@ export function createInnertubeService({
    * H.264 and AAC tracks to disk through the googlevideo client and hand the player two growing
    * fragmented-MP4 files. One session per video is shared by every reader.
    */
-  async function startSabr(req, c, videoId, yt, info) {
-    const session = await sabr.open(`${c.id}:${videoId}:${maxHeight}`, async (session) => {
+  async function startSabr(req, c, videoId, yt, info, height) {
+    const session = await sabr.open(`${c.id}:${videoId}:${height ? `h${height}` : maxHeight}`, async (session) => {
       const [{ SabrStream }, { buildSabrFormat, EnabledTrackTypes }, { Constants }] = await Promise.all([import('googlevideo/sabr-stream'), import('googlevideo/utils'), youtubei()]);
       const streamingData = info.streaming_data;
       const config = info.player_config?.media_common_config?.media_ustreamer_request_config?.video_playback_ustreamer_config;
@@ -534,11 +568,12 @@ export function createInnertubeService({
         return { serverAbrStreamingUrl: await yt.session.player.decipher(fresh.streaming_data.server_abr_streaming_url), videoPlaybackUstreamerConfig: fresh.player_config.media_common_config.media_ustreamer_request_config.video_playback_ustreamer_config };
       };
       const pot = await poToken(yt.session.context.client.visitorData).catch(() => undefined);
-      const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || '') && (f.height || 0) <= maxHeight).sort((a, b) => Number((a.fps || 30) > 31) - Number((b.fps || 30) > 31) || (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const h264 = formats => formats.filter(f => /avc1/i.test(f.mimeType || ''));
       const aac = formats => formats.filter(f => f.hasAudio && /mp4a/i.test(f.mimeType || '') && (f.numChannels || 2) <= 2 && !f.isDescriptive && !f.isAutoDubbed)
         .sort((a, b) => audioRank(a) - audioRank(b) || processed(a) - processed(b) || (b.bitrate || 0) - (a.bitrate || 0))[0];
       const formats = streamingData.adaptive_formats.map(buildSabrFormat);
-      const video = h264(formats), audio = aac(formats);
+      const video = pickVideo(h264(formats), { maxHeight, height }), audio = aac(formats);
+
       if (!video || !audio) throw providerError('YouTube offered no H.264 and AAC tracks for adaptive streaming.', 422);
       log.info?.(`YouTube SABR ${videoId}: video itag ${video.itag} ${video.height || ''}p, audio itag ${audio.itag} ${Math.round((audio.averageBitrate || audio.bitrate || 0) / 1000)}k${audio.language ? ` ${audio.language}` : ''}${audio.isOriginal ? ' original' : ''}${audio.isDrc ? ' drc' : ''}${audio.isVb ? ' voice-boost' : ''}.`);
       // One SABR stream at a time; a reader that needs data elsewhere restarts it at that time.
@@ -556,13 +591,16 @@ export function createInnertubeService({
         void pipe(videoStream, session.video); void pipe(audioStream, session.audio);
         return handle;
       };
-      return { selected: { video, audio }, launch };
+      return { selected: { video, audio }, qualities: videoQualities(h264(formats)), launch };
     });
-    return { sabr: session, video: { spool: session.video }, audio: { spool: session.audio }, isLive: false, via: 'innertube-sabr', title: text(info.basic_info?.title) };
+    // A failed start reaches the player through the spooled files, as before.
+    const selection = await session.selection?.catch(() => null);
+    return { sabr: session, video: { spool: session.video }, audio: { spool: session.audio }, isLive: false, via: 'innertube-sabr', title: text(info.basic_info?.title),
+      ...(selection?.selected?.video ? { picture: describe(selection.selected.video) } : {}), qualities: selection?.qualities || [] };
   }
   /** A live session over the H.264 and AAC segment URLs of a live player response, or null without them. */
-  async function liveStreams(yt, info, videoId) {
-    const chosen = chooseStreams(info.streaming_data, { maxHeight });
+  async function liveStreams(yt, info, videoId, height) {
+    const chosen = chooseStreams(info.streaming_data, { maxHeight, height });
     if (!chosen) return null;
     const urls = async (streamingData, video, audio) => {
       const pick = itag => streamingData?.adaptive_formats?.find(f => f.itag === itag && (f.url || f.signature_cipher || f.cipher));
@@ -580,35 +618,38 @@ export function createInnertubeService({
     // Stream URLs expire after a few hours; a long broadcast asks the same client for fresh ones.
     const refresh = async () => urls((await timed(yt.getBasicInfo(videoId, {}))).streaming_data, chosen.video.itag, chosen.audio.itag);
     log.info?.(`YouTube live ${videoId}: video itag ${chosen.video.itag} ${chosen.video.height || ''}p, audio itag ${chosen.audio.itag}.`);
-    return liveSession({ video: first.video, audio: first.audio, targetDurationSec: chosen.video.target_duration_sec || 5, refresh, log });
+    const session = await liveSession({ video: first.video, audio: first.audio, targetDurationSec: chosen.video.target_duration_sec || 5, refresh, log });
+    return { session, picture: describe(chosen.video), qualities: chosen.qualities };
   }
   /** Direct H.264 + AAC stream URLs for TesPlayer's dual-input path, or null when InnerTube cannot supply them. */
-  const resolvedKey = (c, videoId) => `${c?.id || ''}:${videoId}`;
+  const resolvedKey = (c, videoId, height) => `${c?.id || ''}:${videoId}:${height || 'auto'}`;
   /** Reopening or resuming a video reuses its stream URLs instead of asking YouTube again. */
-  function remember(c, videoId, result) {
+  function remember(c, videoId, height, result) {
     const expire = Number(new URL(result.video.url).searchParams.get('expire')) * 1000;
     // Stop handing a URL out well before googlevideo stops honouring it.
     const expires = Math.min(now() + resolvedLifetime, Number.isFinite(expire) && expire > 0 ? expire - 20 * 60000 : Infinity);
     if (expires <= now()) return;
     for (const [key, entry] of resolved) if (entry.expires <= now()) resolved.delete(key);
     if (resolved.size >= 200) resolved.delete(resolved.keys().next().value);
-    resolved.set(resolvedKey(c, videoId), { result, expires });
+    resolved.set(resolvedKey(c, videoId, height), { result, expires });
   }
   /** Drop remembered URLs that googlevideo has started refusing. */
-  function forget(c, videoId) { resolved.delete(resolvedKey(c, videoId)); }
+  function forget(c, videoId) { const prefix = resolvedKey(c, videoId, '').slice(0, -'auto'.length); for (const key of [...resolved.keys()]) if (key.startsWith(prefix)) resolved.delete(key); }
   /** Prepare the player-role client ahead of the first play (it fetches YouTube's player script). */
   function warm(req, c) {
     if (c && innertubeSignedIn(c)) signedClient(req, c, 'player').catch(() => {});
   }
-  async function resolve(req, c, videoId, signal) {
+  /** Stream addresses for a video; `height` asks for one picture size (see pickVideo), otherwise automatic. */
+  async function resolve(req, c, videoId, signal, { height } = {}) {
     if (!VIDEO_ID.test(String(videoId))) throw providerError('Enter a valid YouTube video ID.', 400);
-    const known = resolved.get(resolvedKey(c, videoId));
+    height = youtubeHeight(height);
+    const known = resolved.get(resolvedKey(c, videoId, height));
     if (known && known.expires > now()) return known.result;
-    const result = await resolveFresh(req, c, videoId, signal);
-    if (result?.video?.url && !result.isLive && result.via !== 'innertube-tv-sabr') remember(c, videoId, result);
+    const result = await resolveFresh(req, c, videoId, signal, height);
+    if (result?.video?.url && !result.isLive && result.via !== 'innertube-tv-sabr') remember(c, videoId, height, result);
     return result;
   }
-  async function resolveFresh(req, c, videoId, signal) {
+  async function resolveFresh(req, c, videoId, signal, height) {
     let sabrCandidate = null;
     const attempts = [];
     if (c && innertubeSignedIn(c)) {
@@ -635,13 +676,13 @@ export function createInnertubeService({
         }
         if (info.basic_info?.is_live && attempt.via === 'innertube-tv' && status === 'OK') {
           // The older TV client lists a live broadcast as per-segment URLs; relay them as growing fragmented MP4.
-          const live = await liveStreams(yt, info, videoId);
-          if (live) return { isLive: true, live, via: 'innertube-tv-live', title: text(info.basic_info?.title) };
+          const live = await liveStreams(yt, info, videoId, height);
+          if (live) return { isLive: true, live: live.session, picture: live.picture, qualities: live.qualities, via: 'innertube-tv-live', title: text(info.basic_info?.title) };
           lastReason = 'TV: live broadcast without H.264/AAC segment URLs'; continue;
         }
         if (info.basic_info?.is_live || info.basic_info?.is_upcoming) return { isLive: true, info: info.basic_info };
         if (status && status !== 'OK') { lastReason = `${attempt.client}: ${status} ${info.playability_status?.reason || ''}`.trim(); continue; }
-        const chosen = chooseStreams(info.streaming_data, { maxHeight });
+        const chosen = chooseStreams(info.streaming_data, { maxHeight, height });
         if (!chosen) {
           if (attempt.via === 'innertube-tv-sabr' && info.streaming_data?.server_abr_streaming_url) {
             sabrCandidate = { yt, info };
@@ -660,7 +701,7 @@ export function createInnertubeService({
         // signed-in TV client's URLs serve any range; checking them only delays the first frame.
         const usable = attempt.client === 'TV' || (await Promise.all([video, audio].map(stream => probe(stream.url, chosen.video === stream ? chosen.video.content_length : chosen.audio.content_length)))).every(Boolean);
         if (!usable) { lastReason = `${attempt.client}: videoplayback refused a mid-file range (proof-of-origin token required)`; continue; }
-        return { video, audio, isLive: false, via: attempt.via, title: text(info.basic_info?.title) };
+        return { video, audio, isLive: false, via: attempt.via, title: text(info.basic_info?.title), picture: describe(chosen.video), qualities: chosen.qualities };
       } catch (error) {
         if (signal?.aborted) throw signal.reason;
         if (error?.status === 409 && attempt.client === 'TV') { lastReason = 'TV: not signed in'; continue; }
@@ -669,7 +710,7 @@ export function createInnertubeService({
       }
     }
     if (sabrCandidate) {
-      try { return await startSabr(req, c, videoId, sabrCandidate.yt, sabrCandidate.info); }
+      try { return await startSabr(req, c, videoId, sabrCandidate.yt, sabrCandidate.info, height); }
       catch (error) { if (signal?.aborted) throw signal.reason; lastReason = `SABR: ${String(error?.message || error).slice(0, 200)}`; }
     }
     log.warn?.(`YouTube InnerTube could not resolve ${videoId} (${lastReason}); falling back to yt-dlp.`);

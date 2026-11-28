@@ -98,6 +98,13 @@ export type Playback = {
   selectedAudioTrackId?: string;
   resumeSeconds?: number;
   settings?: PlaybackSettings;
+  /** YouTube: the H.264 sizes this video offers (`upTo` when the server could not list them). */
+  youtubeQualities?: YouTubeQuality[];
+  /** YouTube: the size asked for; absent for the automatic choice. */
+  youtubeHeight?: number;
+  /** YouTube: the size and frame rate playing. */
+  youtubePicture?: { height: number | null; fps: number };
 };
+export type YouTubeQuality = { height: number; fps: number; upTo?: boolean };
 export const itemKey = (item: MediaItem) =>
   `${item.connectionId || item.source}:${item.type}:${item.id}`;

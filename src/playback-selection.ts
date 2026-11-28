@@ -4,7 +4,16 @@ import { AccessSessionExpiredError, api, tesPlayFetch, youtubeId } from './api';
 import type { MediaItem, Playback, PlaybackSettings, PlaybackOptions, PlayerPreferences } from './types';
 import { defaultPlayerPreferences, preferredLanguageTrack } from './player-preferences';
 
-export function playbackPath(item: MediaItem, settings: PlaybackSettings = {}) {
+/** The YouTube picture size chosen in the player, kept for later videos on this screen; null is automatic. */
+export const YOUTUBE_HEIGHT_KEY = 'tesplay.youtubeHeight';
+const YOUTUBE_HEIGHTS = [1080, 720, 480, 360, 240, 144];
+export function readYouTubeHeight(): number | null {
+  try { const value = Number(localStorage.getItem(YOUTUBE_HEIGHT_KEY)); return YOUTUBE_HEIGHTS.includes(value) ? value : null; } catch { return null; }
+}
+export function writeYouTubeHeight(height: number | null): void {
+  try { if (height && YOUTUBE_HEIGHTS.includes(height)) localStorage.setItem(YOUTUBE_HEIGHT_KEY, String(height)); else localStorage.removeItem(YOUTUBE_HEIGHT_KEY); } catch { /* Private browsing: automatic. */ }
+}
+export function playbackPath(item: MediaItem, settings: PlaybackSettings & { youtubeHeight?: number | null } = {}) {
   const params = new URLSearchParams({connectionId:item.connectionId || '',itemId:item.id,kind:item.type});
   if (settings.compatibility) params.set('transcode','1');
   // Car mode also converts the audio, so it takes the place of audio conversion.
@@ -15,6 +24,8 @@ export function playbackPath(item: MediaItem, settings: PlaybackSettings = {}) {
   if (settings.audioTrackId && settings.audioTrackId !== 'default') params.set('audioTrackId',settings.audioTrackId);
   if (settings.qualityId) params.set('qualityId',settings.qualityId);
   if (settings.sourceId) params.set('sourceId', settings.sourceId);
+  // A YouTube picture size chosen on this screen, served straight from YouTube.
+  if (settings.youtubeHeight) params.set('height', String(settings.youtubeHeight));
   return `/playback?${params}`;
 }
 export async function resolvePlayback(item: MediaItem, settings: PlaybackSettings, signal: AbortSignal, defaults?: PlayerPreferences): Promise<Playback> {
@@ -31,10 +42,12 @@ export async function resolvePlayback(item: MediaItem, settings: PlaybackSetting
     }
   }
   let playback: Playback;
-  if (!item.playbackUrl) playback = await api<Playback>(playbackPath(item,effective),undefined,undefined,signal);
+  const youtubeHeight = item.providerType === 'youtube' || (item.playbackUrl && youtubeId(item.playbackUrl)) ? readYouTubeHeight() : null;
+  const sized = (path: string) => youtubeHeight ? `${path}${path.includes('?') ? '&' : '?'}height=${youtubeHeight}` : path;
+  if (!item.playbackUrl) playback = await api<Playback>(playbackPath(item,{...effective,youtubeHeight}),undefined,undefined,signal);
   else {
     const id = youtubeId(item.playbackUrl);
-    const resolver = id ? `/youtube/resolve/${id}` : item.playbackUrl.startsWith('/api/youtube/resolve/') ? item.playbackUrl.slice(4) : null;
+    const resolver = id ? sized(`/youtube/resolve/${id}`) : item.playbackUrl.startsWith('/api/youtube/resolve/') ? sized(item.playbackUrl.slice(4)) : null;
     playback = resolver ? await api<Playback>(resolver,undefined,undefined,signal) : {url:item.playbackUrl,type:item.type==='audio'?'audio':/\.m3u8(?:[?#]|$)/i.test(item.playbackUrl)?'hls':'video',...(/\.ts(?:[?#]|$)/i.test(item.playbackUrl)?{streamKind:'continuous-ts' as const}:{})};
   }
   return {...playback,settings:effective,defaults:await preferencesRequest};

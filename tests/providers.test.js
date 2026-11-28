@@ -1528,3 +1528,33 @@ test("YouTube playback resolves through InnerTube first and keeps yt-dlp as the 
   assert.deepEqual(calls, [['innertube', id, 'abcdefghijk'], ['innertube', id, 'liveliveliv'], ['yt-dlp', 'liveliveliv'], ['innertube', id, 'zzzzzzzzzzz'], ['yt-dlp', 'zzzzzzzzzzz']]);
   assert.equal((await f.request(`/api/connections/${id}/test`, { method: 'POST' })).status, 200);
 });
+
+test("a YouTube size chosen in the player reaches InnerTube and yt-dlp, and the answer lists the sizes on offer", async (t) => {
+  const asked = [];
+  const qualities = [{ height: 1080, fps: 60 }, { height: 720, fps: 30 }];
+  const innertube = {
+    mode: (c) => c.config.authMode === 'innertube',
+    resolve: async (_req, _c, id, _signal, options) => {
+      asked.push(['innertube', id, options?.height]);
+      if (id === 'zzzzzzzzzzz') return null;
+      return { via: 'innertube-tv', isLive: false, picture: { height: options?.height || 720, fps: options?.height === 1080 ? 60 : 30 }, qualities,
+        video: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=299', headers: {} }, audio: { url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=140', headers: {} } };
+    },
+  };
+  const f = await fixture(t, { innertube, resolveYouTube: async (id, _signal, options) => {
+    asked.push(['yt-dlp', id, options?.height]);
+    return { video: { url: 'https://test.googlevideo.com/v.mp4', headers: {} }, audio: null, isLive: false };
+  } });
+  const id = f.add('youtube', { authMode: 'innertube', tvRefreshToken: 'rt' });
+  const chosen = await (await f.request(`/api/playback?connectionId=${id}&itemId=abcdefghijk&height=1080`)).json();
+  assert.deepEqual(chosen.youtubeQualities, qualities);
+  assert.equal(chosen.youtubeHeight, 1080);
+  assert.deepEqual(chosen.youtubePicture, { height: 1080, fps: 60 });
+  const automatic = await (await f.request(`/api/playback?connectionId=${id}&itemId=abcdefghijk&height=2160`)).json();
+  assert.equal(automatic.youtubeHeight, undefined, 'a size YouTube has no H.264 track for is automatic');
+  assert.deepEqual(automatic.youtubePicture, { height: 720, fps: 30 });
+  const fallback = await (await f.request(`/api/youtube/resolve/zzzzzzzzzzz?height=480`)).json();
+  assert.equal(fallback.youtubeHeight, 480);
+  assert.ok(fallback.youtubeQualities.every((size) => size.upTo), 'yt-dlp cannot list sizes, so the choices are ceilings');
+  assert.deepEqual(asked, [['innertube', 'abcdefghijk', 1080], ['innertube', 'abcdefghijk', undefined], ['innertube', 'zzzzzzzzzzz', 480], ['yt-dlp', 'zzzzzzzzzzz', 480]]);
+});

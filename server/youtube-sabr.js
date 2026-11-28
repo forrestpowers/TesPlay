@@ -240,9 +240,13 @@ export function createSabrBridge({ cacheDir, log = console, now = Date.now, maxS
     session.audio.onNeed = need(session.audio);
     await Promise.all([session.video.openForWriting(), session.audio.openForWriting()]);
     sessions.set(key, session);
+    const prepared = run(session);
+    // What the session plays and the sizes it could play instead, once the tracks are chosen.
+    session.selection = prepared.then(({ selected, qualities }) => ({ selected, qualities: qualities || [] }));
+    session.selection.catch(() => {});
     session.started = (async () => {
       try {
-        const { selected, launch } = await run(session);
+        const { selected, launch } = await prepared;
         session.launch = launch;
         session.selected = selected;
         session.current = await launch(0);

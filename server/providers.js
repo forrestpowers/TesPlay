@@ -2,7 +2,7 @@ import { plainText, mediaDate } from "./text.js";
 import { registerStremioRoutes } from './stremio.js';
 import { createYouTubeResolver } from "./youtube.js";
 import { registerYouTubeBrowser } from "./youtube-browser.js";
-import { createInnertubeService, registerInnertubeRoutes } from "./youtube-innertube.js";
+import { createInnertubeService, registerInnertubeRoutes, youtubeHeight, YOUTUBE_HEIGHTS } from "./youtube-innertube.js";
 import { createSabrBridge } from "./youtube-sabr.js";
 import { registerPlexLibrary } from "./plex-library.js";
 import { createProviderCache } from "./provider-cache.js";
@@ -596,14 +596,23 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
   async function youtubePlayback(req, videoId, c = null) {
     const controller = new AbortController();
     req.res.once("close", () => { if (!req.res.writableEnded) controller.abort(); });
+    // A picture size chosen in the player, straight from YouTube; absent means automatic.
+    const height = youtubeHeight(req.query.height);
+    // The sizes offered for the player's choice, and the one playing.
+    const sizes = (found) => ({
+      youtubeQualities: found?.qualities?.length ? found.qualities : YOUTUBE_HEIGHTS.filter((h) => h >= 360).map((h) => ({ height: h, fps: 30, upTo: true })),
+      ...(height ? { youtubeHeight: height } : {}),
+      ...(found?.picture?.height ? { youtubePicture: found.picture } : {}),
+    });
     // InnerTube first (signed-in TV client, then anonymous iOS); yt-dlp remains the fallback and the live path.
-    let resolved = innertube ? await innertube.resolve(req, c, videoId, controller.signal).catch(error => { if (error?.status === 400) throw error; return null; }) : null;
+    let resolved = innertube ? await innertube.resolve(req, c, videoId, controller.signal, { height }).catch(error => { if (error?.status === 400) throw error; return null; }) : null;
     if (resolved?.live) {
       // A live broadcast relayed segment by segment: two growing fragmented-MP4 tracks.
       const track = (name) => media.register(req, c, { kind: "video", live: { session: resolved.live, track: name }, contentType: name === "audio" ? "audio/mp4" : "video/mp4" });
-      return { url: track("video"), audioUrl: track("audio"), type: "video", isLive: true, streamKind: "growing-fmp4", provider: "youtube", via: resolved.via };
+      return { url: track("video"), audioUrl: track("audio"), type: "video", isLive: true, streamKind: "growing-fmp4", provider: "youtube", via: resolved.via, ...sizes(resolved) };
     }
-    if (!resolved?.video) resolved = await resolveYouTube(videoId, controller.signal);
+    // yt-dlp cannot list the sizes cheaply; it plays the tallest at or below the chosen one.
+    if (!resolved?.video) resolved = await resolveYouTube(videoId, controller.signal, { height });
     const register = (resource, prefetchBytes) => media.register(req, c, resource.spool
       // A SABR track spooled on the server: served by byte range as it downloads.
       ? { kind: "video", spool: resource.spool, contentType: "video/mp4", touch: () => resolved.sabr?.touch?.() }
@@ -621,6 +630,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       streamKind: resolved.audio ? "dual-input" : "direct-file",
       provider: "youtube",
       ...(resolved.via ? { via: resolved.via } : {}),
+      ...sizes(resolved.via ? resolved : null),
     };
   }
   const youtubeLimit = rateLimit({ windowMs: 60000, limit: 10, keyGenerator: (req) => req.user.id, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many YouTube requests. Try again in a minute." } });
