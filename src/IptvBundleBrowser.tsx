@@ -59,7 +59,7 @@ export default function IptvBundleBrowser({ connections: allConnections, library
   const open = (item:MediaItem) => item.type === 'series' ? setParent(item) : onOpen(item);
   return <div className="library-layout">
     <aside className="library-sidebar" aria-label="IPTV bundle categories"><div className="sidebar-label">IPTV · {connections.length} {connections.length === 1 ? 'connection' : 'connections'}</div>
-      {kinds.filter(([id]) => connections.some(c => c.type === 'xtream' && (!c.access || c.access.kinds.includes(id)) || c.type === 'm3u' && id === 'live' && (!c.access || c.access.kinds.includes(id)))).map(([id,title,Icon]) => <button key={id} className={`sidebar-link ${kind === id ? 'selected' : ''}`} onClick={() => changeKind(id)}><Icon size={18}/>{title}</button>)}
+      {kinds.filter(([id]) => connections.some(c => c.type === 'xtream' && (id === 'live' || c.onDemand) && (!c.access || c.access.kinds.includes(id)) || c.type === 'm3u' && id === 'live' && (!c.access || c.access.kinds.includes(id)))).map(([id,title,Icon]) => <button key={id} className={`sidebar-link ${kind === id ? 'selected' : ''}`} onClick={() => changeKind(id)}><Icon size={18}/>{title}</button>)}
       <div className="sidebar-label">Categories</div><button className={`sidebar-link ${!category ? 'selected' : ''}`} onClick={() => choose(null)}>All loaded {kind === 'live' ? 'channels' : 'titles'}</button>
       <div className="sidebar-categories">{categories.map(value => {
         const starred = value.sources.every(source => library.stars?.some(s => s.connectionId === source.connectionId && s.id === source.id && s.kind === 'category'));

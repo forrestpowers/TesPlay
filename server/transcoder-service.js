@@ -1,12 +1,16 @@
 import http from "node:http";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { execFile } from "node:child_process";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { requestRemote, validateRemoteUrl } from "./media.js";
-import { createTranscoder, detectEncoder, DEFAULT_PROFILE, profileForHeight } from "./transcoder.js";
+import { createTranscoder, describeProbe, detectEncoder, DEFAULT_PROFILE, fileProbeArguments, profileForHeight } from "./transcoder.js";
 
-// Car-mode transcoder: a small service for a machine with a GPU (for example an
-// Intel mini PC). TesPlay posts a live channel's address; this service opens it,
-// converts it to 720p30 H.264 with stereo AAC and streams MPEG-TS back.
-// Only requests carrying TRANSCODER_TOKEN are served, so it is not an open relay.
+// TesPlay transcoder: a small service for a machine with a GPU (for example an
+// Intel mini PC). For car mode, TesPlay posts a live channel's address; this
+// service opens it, converts it to 720p30 H.264 with stereo AAC and streams
+// MPEG-TS back. For IPTV movies and episodes the browser cannot decode (such as
+// H.265), it describes the file (/probe) and converts it from any start
+// position. Only requests carrying TRANSCODER_TOKEN are served, so it is not an
+// open relay.
 
 const MAX_BODY_BYTES = 16 * 1024;
 const FIRST_BYTES_MS = 30_000;
@@ -21,6 +25,7 @@ export function transcoderConfig(env = process.env) {
     token: env.TRANSCODER_TOKEN || "",
     port: number(env.TRANSCODER_PORT, 4190, 1, 65535),
     ffmpeg: env.FFMPEG_PATH || "ffmpeg",
+    ffprobe: env.FFPROBE_PATH || "ffprobe",
     device: env.TRANSCODER_DEVICE || "/dev/dri/renderD128",
     encoder: ["auto", "vaapi", "vaapi-lp", "software"].includes(env.TRANSCODER_ENCODER) ? env.TRANSCODER_ENCODER : "auto",
     limit: number(env.TRANSCODE_LIMIT, 3, 1, 32),
@@ -55,7 +60,60 @@ async function readJson(req) {
   catch { throw Object.assign(new Error("Send a JSON body."), { status: 400 }); }
 }
 
-export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_PROFILE, allowedPrivateHosts = [], prebufferMs = 0, request = requestRemote, log = console }) {
+/**
+ * Movies and episodes must be read by byte range so FFmpeg can seek. FFmpeg
+ * reads them from this loopback relay, one random address per job, and the
+ * relay makes every provider request itself through the usual address checks
+ * (private networks refused, redirects validated). FFmpeg never sees the
+ * provider's address or connects anywhere else.
+ */
+export function createInputRelay({ request = requestRemote, allowedPrivateHosts = [] } = {}) {
+  const jobs = new Map();
+  const server = http.createServer(async (req, res) => {
+    const job = jobs.get(String(req.url || "").slice(1));
+    if (!job || !["GET", "HEAD"].includes(req.method)) return res.writeHead(404).end();
+    const controller = new AbortController();
+    res.once("close", () => controller.abort());
+    try {
+      const upstream = await request(job.url, {
+        method: req.method, headers: req.headers.range ? { Range: req.headers.range } : {},
+        allowedPrivateHosts, timeout: 45000, signal: controller.signal,
+      });
+      const headers = {};
+      for (const name of ["content-type", "content-length", "content-range", "accept-ranges"])
+        if (upstream.headers[name]) headers[name] = upstream.headers[name];
+      res.writeHead(upstream.statusCode, headers);
+      if (req.method === "HEAD") { upstream.destroy(); return res.end(); }
+      upstream.once("error", () => res.destroy());
+      upstream.pipe(res);
+    } catch {
+      if (res.headersSent) res.destroy(); else res.writeHead(502).end();
+    }
+  });
+  const ready = new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    async register(url) {
+      await ready;
+      const id = randomBytes(18).toString("base64url");
+      jobs.set(id, { url });
+      return { url: `http://127.0.0.1:${server.address().port}/${id}`, release: () => jobs.delete(id) };
+    },
+    get open() { return jobs.size; },
+    close() { server.close(); server.closeAllConnections(); },
+  };
+}
+
+/** Reads a file's duration and codecs through the relay. */
+export function createFileProbe({ ffprobe = "ffprobe", run = execFile } = {}) {
+  return (url) => new Promise((resolve, reject) =>
+    run(ffprobe, fileProbeArguments(url), { timeout: 30000, maxBuffer: 1024 * 1024, windowsHide: true }, (error, stdout) => {
+      if (error) return reject(Object.assign(new Error("This title could not be read."), { status: 502 }));
+      try { resolve(describeProbe(JSON.parse(stdout))); }
+      catch { reject(Object.assign(new Error("This title could not be read."), { status: 502 })); }
+    }));
+}
+
+export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_PROFILE, allowedPrivateHosts = [], prebufferMs = 0, relay = null, probe = null, request = requestRemote, log = console }) {
   const json = (res, status, body) => {
     if (res.headersSent) return res.destroy();
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
@@ -66,32 +124,56 @@ export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_P
     try {
       if (req.method === "GET" && req.url === "/health")
         return json(res, 200, { ok: true, encoder: transcoder.encoder, active: transcoder.active, limit: transcoder.limit });
-      if (req.method !== "POST" || req.url !== "/transcode") return json(res, 404, { error: "Not found" });
+      if (req.method !== "POST" || !["/transcode", "/probe"].includes(req.url)) return json(res, 404, { error: "Not found" });
       if (!authorized(req, token)) return json(res, 401, { error: "A valid transcoder token is required." });
       const body = await readJson(req);
       let source;
       try { source = validateRemoteUrl(String(body?.url || "")); }
-      catch { return json(res, 400, { error: "Send the channel's http(s) address." }); }
+      catch { return json(res, 400, { error: "Send the title's http(s) address." }); }
+      // Movies and episodes: describe the file so TesPlay can decide whether it needs converting.
+      if (req.url === "/probe") {
+        if (!relay || !probe) return json(res, 404, { error: "This transcoder does not convert movies." });
+        const entry = await relay.register(source.toString());
+        try { return json(res, 200, await probe(entry.url)); }
+        finally { entry.release(); }
+      }
+      const vod = body?.mode === "vod";
+      if (vod && !relay) return json(res, 404, { error: "This transcoder does not convert movies." });
       if (transcoder.active >= transcoder.limit)
-        return json(res, 503, { error: "Too many channels are in car mode right now. Try again shortly." });
-      const upstream = await request(source.toString(), {
-        allowedPrivateHosts, timeout: 45000, signal: controller.signal,
-      });
-      if (upstream.statusCode >= 400) {
-        upstream.resume();
-        return json(res, 502, { error: `Media provider returned HTTP ${upstream.statusCode}.` });
+        return json(res, 503, { error: "Too many titles are converting right now. Try again shortly." });
+      // The player chooses the size; the bitrate follows it. Files keep their own
+      // frame rate unless TesPlay asks for 30 (a 50/60 fps source).
+      const sized = profileForHeight(profile, body?.height);
+      let job, entry = null;
+      if (vod) {
+        const start = Number(body?.start);
+        entry = await relay.register(source.toString());
+        job = transcoder.start({
+          file: { url: entry.url, start: Number.isFinite(start) && start > 0 && start < 86400 ? start : 0 },
+          signal: controller.signal,
+          profile: { ...sized, fps: Number(body?.fps) === 30 ? 30 : null },
+        });
+        job.exit.finally(() => entry.release());
+      } else {
+        const upstream = await request(source.toString(), {
+          allowedPrivateHosts, timeout: 45000, signal: controller.signal,
+        });
+        if (upstream.statusCode >= 400) {
+          upstream.resume();
+          return json(res, 502, { error: `Media provider returned HTTP ${upstream.statusCode}.` });
+        }
+        const contentType = String(upstream.headers["content-type"] || "application/octet-stream");
+        if (!/^(?:video\/|audio\/|application\/octet-stream(?:;|$))/i.test(contentType)) {
+          upstream.destroy();
+          return json(res, 502, { error: "The provider returned an unsupported media response." });
+        }
+        job = transcoder.start({ input: upstream, signal: controller.signal, profile: sized });
       }
-      const contentType = String(upstream.headers["content-type"] || "application/octet-stream");
-      if (!/^(?:video\/|audio\/|application\/octet-stream(?:;|$))/i.test(contentType)) {
-        upstream.destroy();
-        return json(res, 502, { error: "The provider returned an unsupported media response." });
-      }
-      // The player chooses the size (720p or 480p); the bitrate follows it.
-      const job = transcoder.start({ input: upstream, signal: controller.signal, profile: profileForHeight(profile, body?.height) });
       let sent = 0;
       // A live conversion arrives in real time, so the player can only stay as
       // far ahead as it starts. Hold the first seconds and send them at once.
-      let held = prebufferMs > 0 ? [] : null;
+      // A file converts faster than real time and needs no head start.
+      let held = prebufferMs > 0 && !vod ? [] : null;
       let holdTimer;
       const release = () => {
         clearTimeout(holdTimer);
@@ -122,7 +204,7 @@ export function createTranscoderHandler({ token, transcoder, profile = DEFAULT_P
       if (sent) return res.end();
       // FFmpeg only sees pipes, so its messages name no provider address or credential.
       log.warn?.(`Car-mode conversion ended (exit ${code ?? error?.code ?? "?"}): ${String(stderr || "").trim().slice(0, 500)}`);
-      return json(res, error?.code === "ENOENT" ? 503 : 502, { error: error?.code === "ENOENT" ? "FFmpeg is not installed on the transcoder." : "This channel could not be converted." });
+      return json(res, error?.code === "ENOENT" ? 503 : 502, { error: error?.code === "ENOENT" ? "FFmpeg is not installed on the transcoder." : vod ? "This title could not be converted." : "This channel could not be converted." });
     } catch (error) {
       if (controller.signal.aborted) return;
       json(res, error.status && error.status < 600 ? error.status : 502, { error: error.message || "The transcoder failed." });
@@ -143,10 +225,12 @@ async function main() {
   }
   for (const [name, reason] of Object.entries(detected.failures)) console.warn(`Encoder ${name} unavailable: ${reason}`);
   const transcoder = createTranscoder({ ffmpeg: config.ffmpeg, limit: config.limit, encoder: detected.encoder, device: config.device, profile: config.profile });
-  const server = http.createServer(createTranscoderHandler({ token: config.token, transcoder, profile: config.profile, allowedPrivateHosts: config.allowedPrivateHosts, prebufferMs: config.prebufferMs }));
+  const relay = createInputRelay({ allowedPrivateHosts: config.allowedPrivateHosts });
+  const probe = createFileProbe({ ffprobe: config.ffprobe });
+  const server = http.createServer(createTranscoderHandler({ token: config.token, transcoder, profile: config.profile, allowedPrivateHosts: config.allowedPrivateHosts, prebufferMs: config.prebufferMs, relay, probe }));
   server.listen(config.port, "0.0.0.0", () =>
     console.log(`TesPlay car-mode transcoder on port ${config.port}: ${detected.encoder} encoder, ${config.profile.height}p${config.profile.fps}, up to ${config.limit} channels`));
-  const stop = () => { server.close(); server.closeAllConnections(); };
+  const stop = () => { server.close(); server.closeAllConnections(); relay.close(); };
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
 }

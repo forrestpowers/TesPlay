@@ -58,6 +58,17 @@ const pageData = (query) => ({
     .slice(0, 200),
   category: String(query.category || ""),
 });
+/**
+ * Whether a probed IPTV movie or episode needs converting for the browser:
+ * video other than H.264 (most IPTV films are H.265), or audio WebCodecs and
+ * TesPlay's own decoders cannot play (AC-3, E-AC-3, DTS and the like).
+ */
+export function titleNeedsConversion(probe) {
+  if (!probe?.video) return false;
+  if (probe.video.codec !== "h264") return true;
+  return !!probe.audio && !["aac", "mp3", "mp2", "opus", "flac", "vorbis"].includes(probe.audio.codec);
+}
+
 export function paginate(items, query = {}) {
   const { page, limit, q, category } = pageData(query);
   const filtered = items.filter(
@@ -388,6 +399,19 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           }
         : {},
     );
+  }
+  // What the transcoder found in each IPTV movie or episode, kept for six hours.
+  const titleProbes = new Map();
+  async function probeTitle(c, key, url) {
+    const cacheKey = `${c.id}:${key}`, hit = titleProbes.get(cacheKey);
+    if (hit && Date.now() - hit.at < 6 * 3600000) return hit.value;
+    // Without an answer the title plays directly, as it did before conversion existed.
+    const value = await media.probeTitle(url).catch(() => null);
+    if (value) {
+      titleProbes.set(cacheKey, { at: Date.now(), value });
+      if (titleProbes.size > 1000) titleProbes.delete(titleProbes.keys().next().value);
+    }
+    return value;
   }
   async function ensureXtream(req,c,kind,id) {
     if(!c.access && !Array.isArray(c.config.loadedCategories)) { const value={type:kind};ensure(req,c,value);return value; }
@@ -1088,7 +1112,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       const converted = () => compatibility ? { compatibility, isLive: true, ...(compatibility === "video" ? { carModeHeight: carHeight } : {}) } : {};
       if (c.type === "xtream") {
         if (!IPTV_KINDS.includes(kind === "episode" ? "series" : kind)) throw iptvOnDemandOff();
-        let category, extension, streamId;
+        let category, extension, streamId, listedDuration = 0;
         if (kind === "live") {
           await ensureXtream(req,c,"live",id);
           category = "live";
@@ -1108,6 +1132,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           category = "series";
           streamId = match[2];
           extension = String(episode.container_extension || "mp4");
+          listedDuration = Number(episode.info?.duration_secs) || 0;
         } else if (kind === "movie") {
           await ensureXtream(req,c,"movie",id);
           const data = await xtream(c, "get_vod_info", { vod_id: numeric(id) });
@@ -1115,6 +1140,7 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           category = "movie";
           streamId = numeric(id);
           extension = String(data.movie_data.container_extension || "mp4");
+          listedDuration = Number(data.info?.duration_secs) || 0;
         } else throw providerError("Select an episode before playing.");
         if (!/^[a-zA-Z0-9]{1,8}$/.test(extension))
           throw providerError("Invalid stream format.");
@@ -1123,6 +1149,26 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           u.pathname.replace(/\/?(?:player_api\.php)?$/, "/") +
           `${category}/${encodeURIComponent(c.config.username)}/${encodeURIComponent(c.config.password)}/${streamId}.${extension}`;
         u.search = "";
+        // IPTV movies and episodes the browser cannot decode (most are H.265)
+        // are converted to H.264 by the transcoder, from the requested position.
+        if (kind !== "live" && media.carModeAvailable) {
+          const probe = await probeTitle(c, `${kind}:${streamId}`, u.toString());
+          if (probe && titleNeedsConversion(probe)) {
+            const durationSeconds = probe.durationSeconds || (listedDuration > 0 ? Math.round(listedDuration) : null);
+            const requested = Math.max(0, Math.floor(Number(req.query.start) || 0));
+            const start = durationSeconds ? Math.min(requested, Math.max(0, durationSeconds - 5)) : requested;
+            return res.json({
+              url: media.register(req, c, {
+                url: u.toString(), allowedPrivateHosts: privateHosts(c.config.url), kind: "video",
+                remux: "vod", transcodeStart: start, transcodeHeight: 1080,
+                // Films keep their own frame rate; 50/60 fps sources are halved.
+                ...(probe.video?.fps > 31 ? { transcodeFps: 30 } : {}),
+              }),
+              type: "video", streamKind: "continuous-ts", compatibility: "vod",
+              durationSeconds, startSeconds: start,
+            });
+          }
+        }
         const type = extension === "m3u8" ? "hls" : "video";
         return res.json({
           url: media.register(req, c, {

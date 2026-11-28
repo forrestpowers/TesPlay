@@ -72,7 +72,7 @@ export type Library = {
 };
 export type Preferences = { autoPlayNext: boolean; hideYouTubeShorts?: boolean; carMode?: 'off' | '720' | '480' };
 export type PlayerPreferences = { audioLanguage: string | null; subtitleLanguage: string | null; subtitlesEnabled: boolean; qualityId: 'auto' | '1080p' | '720p' | '480p' };
-export type PlaybackSettings = { audioTrackId?: string; subtitleTrackId?: string; qualityId?: string; compatibility?: boolean; audioRemux?: boolean; carMode?: 720 | 480; startOver?: boolean; sourceId?: string };
+export type PlaybackSettings = { audioTrackId?: string; subtitleTrackId?: string; qualityId?: string; compatibility?: boolean; audioRemux?: boolean; carMode?: 720 | 480; vodStart?: number; startOver?: boolean; sourceId?: string };
 export type PlaybackChoice = { id: string; label: string; language?: string; codec?: string; selected?: boolean };
 export type StreamChoice = { id: string; label: string; description?: string; addon: string; unavailable?: boolean; unavailableReason?: string };
 export type PlaybackOptions = { item?: MediaItem; audio: PlaybackChoice[]; subtitles: PlaybackChoice[]; qualities: PlaybackChoice[]; sources?: StreamChoice[]; note?: string };
@@ -82,7 +82,10 @@ export type Playback = {
   url: string;
   type: "hls" | "video" | "audio" | "external";
   streamKind?: "direct-file" | "continuous-ts" | "dual-input" | "growing-fmp4";
-  compatibility?: "audio" | "video";
+  compatibility?: "audio" | "video" | "vod";
+  /** A converted movie or episode: its full length and where this stream starts within it. */
+  durationSeconds?: number | null;
+  startSeconds?: number;
   /** The server can convert this live channel to 720p30 (car mode). */
   carMode?: boolean;
   /** The car mode size this stream was converted to. */

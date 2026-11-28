@@ -22,8 +22,10 @@ const time = (seconds: number) => {
   return whole >= 3600 ? `${Math.floor(whole / 3600)}:${String(Math.floor(whole / 60) % 60).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}` : `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 };
 const INITIAL_MESSAGE = 'Press play to begin';
-export default function TesPlayer({ playback, item, resume, plexCompatibility, canTranscode, onCompatibilityChange, onRetry, getAudioContext, autoStart, onProgress, onEnded, onPlaying, onError, onRemoteState, previous, next, onNavigate, remoteOnly = false }: {
+export default function TesPlayer({ playback, item, resume, plexCompatibility, canTranscode, onCompatibilityChange, onRetry, onVodSeek, getAudioContext, autoStart, onProgress, onEnded, onPlaying, onError, onRemoteState, previous, next, onNavigate, remoteOnly = false }: {
   playback: Playback; item: MediaItem; resume: number; plexCompatibility: boolean; canTranscode: boolean; onCompatibilityChange:(value:boolean)=>void; onRetry:()=>void;
+  /** Restart a converted movie or episode at this position in the title. */
+  onVodSeek?:(seconds:number)=>void;
   getAudioContext: () => AudioContext | undefined; autoStart: boolean;
   onRemoteState?: (state:RemotePlayback)=>void;
   remoteOnly?: boolean;
@@ -33,6 +35,15 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<PlayerEngine | null>(null);
   const [snapshot, setSnapshot] = useState<PlayerSnapshot | null>(null);
+  // A converted IPTV movie or episode arrives as a stream that begins at
+  // startSeconds. Show, save and seek on the title's own timeline; seeking
+  // restarts the conversion at the new position.
+  const vod = playback.compatibility === 'vod';
+  const vodOffset = vod ? playback.startSeconds || 0 : 0;
+  const vodDuration = vod ? playback.durationSeconds ?? null : null;
+  const timeline = (state: PlayerSnapshot): PlayerSnapshot => vod ? { ...state, positionSeconds: vodOffset + state.positionSeconds, durationSeconds: vodDuration, seekableStartSeconds: 0, seekableEndSeconds: vodDuration, isLive: false } : state;
+  const view = snapshot ? timeline(snapshot) : null;
+  const vodSeek = useRef(onVodSeek); vodSeek.current = onVodSeek;
   // Per-device settings: a car screen and a phone can differ.
   const [showStats, setShowStats] = useState(() => readDevicePreference(PLAYBACK_STATS_KEY));
   const [halfFrameRate, setHalfFrameRate] = useState(() => readDevicePreference(HALF_FRAME_RATE_KEY));
@@ -80,7 +91,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
   };
   useEffect(()=>{const remote=(e:Event)=>{if((e as CustomEvent).detail.command==='fullscreen')toggleFullscreen();};window.addEventListener('aperture:remote',remote);return()=>window.removeEventListener('aperture:remote',remote);},[immersive,remoteOnly]);
   const remoteReporter = useRef(onRemoteState); remoteReporter.current = onRemoteState;
-  useEffect(()=>{const state=remotePlayback(snapshot, remoteOnly || fullscreen || immersive, localCaptions, localCues.length > 0, remoteOnly);remoteReporter.current?.(failed?{...state,phase:"error"}:state);},[snapshot,fullscreen,immersive,remoteOnly,localCaptions,localCues.length,failed]);
+  useEffect(()=>{const state=remotePlayback(view, remoteOnly || fullscreen || immersive, localCaptions, localCues.length > 0, remoteOnly);remoteReporter.current?.(failed?{...state,phase:"error"}:state);},[snapshot,fullscreen,immersive,remoteOnly,localCaptions,localCues.length,failed]);
   useEffect(()=>{
     const remote=(event:Event)=>{
       if ((event as CustomEvent).detail.command !== 'captions') return;
@@ -136,7 +147,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     setLocalCues([]); setLocalCaptions(false);
     const save = (completed = false, stopped = false) => {
       if (!active || !didPlay || didComplete) return;
-      const state = active.getSnapshot();
+      const state = timeline(active.getSnapshot());
       if (!completed && !stopped && !['playing','paused','stalled'].includes(state.phase)) return;
       const duration = state.durationSeconds || 0;
       progress.current(completed && duration ? duration : state.positionSeconds, duration, completed||stopped?'stopped':state.phase==='ended'||state.phase==='error'?'stopped':state.phase==='paused'?'paused':'playing');
@@ -165,7 +176,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
           if (event.type === 'state') {
             const state = event.snapshot;
             setSnapshot(state);
-            if(state.phase==='playing'||state.phase==='paused'){lastPosition.current=state.positionSeconds;lastDuration.current=state.durationSeconds||lastDuration.current;}
+            if(state.phase==='playing'||state.phase==='paused'){const shown=timeline(state);lastPosition.current=shown.positionSeconds;lastDuration.current=shown.durationSeconds||lastDuration.current;}
             if(state.phase==='error')return;
             setBusy(['loading', 'seeking', 'stalled'].includes(state.phase));
             if (state.phase === 'playing') { didPlay = true; setFailed(false); if (lastSavedPhase !== 'playing') {didComplete=false;playing.current();save();} reportError.current(''); }
@@ -178,7 +189,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
           if (event.type === 'audio-unlock-required') { setMessage('Press play to enable sound'); setBusy(false); }
         });
         // A live channel always joins at its live edge: a position saved earlier means nothing in a new live stream.
-        await active.load({ session: adapter.session, resumePositionSeconds: adapter.session.isLive ? null : resumeAt || null, autoplay: autoStart, startAtLiveEdge: adapter.session.isLive, preferredQualityId: adapter.session.selectedQualityId ?? null, preferredAudioTrackId: adapter.session.selectedAudioTrackId ?? null, preferredSubtitleTrackId: playback.settings?.subtitleTrackId && playback.settings.subtitleTrackId !== 'default' ? playback.settings.subtitleTrackId==='off'?null:adapter.session.subtitles.find(t=>t.id===playback.settings?.subtitleTrackId)?.id||null : preferredSubtitleTrack(adapter.session.subtitles,preferences)?.id || null, signedAvOffsetMs: 0 }, controller.signal);
+        await active.load({ session: adapter.session, resumePositionSeconds: adapter.session.isLive || vod ? null : resumeAt || null, autoplay: autoStart, startAtLiveEdge: adapter.session.isLive, preferredQualityId: adapter.session.selectedQualityId ?? null, preferredAudioTrackId: adapter.session.selectedAudioTrackId ?? null, preferredSubtitleTrackId: playback.settings?.subtitleTrackId && playback.settings.subtitleTrackId !== 'default' ? playback.settings.subtitleTrackId==='off'?null:adapter.session.subtitles.find(t=>t.id===playback.settings?.subtitleTrackId)?.id||null : preferredSubtitleTrack(adapter.session.subtitles,preferences)?.id || null, signedAvOffsetMs: 0 }, controller.signal);
         startPlexPlaybackHeartbeat(playback, controller.signal, () => !!active && ['ready','playing','paused','seeking','stalled'].includes(active.getSnapshot().phase));
         if (!controller.signal.aborted) { setBusy(false); if(active.getSnapshot().phase!=='playing')setMessage(INITIAL_MESSAGE); }
       } catch (reason) { if (!controller.signal.aborted) error(reason); }
@@ -190,14 +201,16 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
     const remote = (event: Event) => {
       const { command, value } = (event as CustomEvent<{ command: string; value?: number }>).detail;
       if (!active) return;
-      const state = active.getSnapshot();
+      const state = timeline(active.getSnapshot());
       if (state.isLive && (command === 'seek' || command === 'seek-to')) return;
+      const seekTo = (target: number) => vod ? vodSeek.current?.(Math.max(0, Math.min(state.seekableEndSeconds ?? Infinity, target))) : void active?.dispatch({ type: 'seek', positionSeconds: target }).catch(error);
       // A remote device cannot grant this browser a user gesture for Web Audio.
       if (command === 'play' && state.audioTracks.length > 0 && !state.audioUnlocked) { setMessage('Enable playback on this screen'); return; }
-      if (command === 'play' && state.phase === 'ended') void active.dispatch({type:'seek',positionSeconds:state.seekableStartSeconds || 0}).then(()=>active?.dispatch({type:'play'})).catch(error);
+      if (command === 'play' && state.phase === 'ended' && vod) vodSeek.current?.(0);
+      else if (command === 'play' && state.phase === 'ended') void active.dispatch({type:'seek',positionSeconds:state.seekableStartSeconds || 0}).then(()=>active?.dispatch({type:'play'})).catch(error);
       else if (command === 'play' || command === 'pause') void active.dispatch({ type: command }).catch(error);
-      if (command === 'seek') void active.dispatch({ type: 'seek', positionSeconds: Math.max(state.seekableStartSeconds || 0, Math.min(state.seekableEndSeconds ?? Infinity, state.positionSeconds + (value || 0))) }).catch(error);
-      if (command === 'seek-to') void active.dispatch({type:'seek',positionSeconds:Math.max(state.seekableStartSeconds || 0,Math.min(state.seekableEndSeconds ?? state.durationSeconds ?? Infinity,value || 0))}).catch(error);
+      if (command === 'seek') seekTo(Math.max(state.seekableStartSeconds || 0, Math.min(state.seekableEndSeconds ?? Infinity, state.positionSeconds + (value || 0))));
+      if (command === 'seek-to') seekTo(Math.max(state.seekableStartSeconds || 0,Math.min(state.seekableEndSeconds ?? state.durationSeconds ?? Infinity,value || 0)));
       if (command === 'mute') void active.dispatch({type:'set-muted',muted:value === 1}).catch(error);
       if (command === 'rate' && !state.isLive) void active.dispatch({type:'set-rate',rate:value || 1}).catch(error);
       if (command === 'volume') void active.dispatch({ type: 'set-volume', volume: Math.min(1, Math.max(0, value ?? 1)) }).catch(error);
@@ -226,16 +239,16 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
       else {
         // Call directly from the click/keyboard handler, before other asynchronous work.
         if (state.audioTracks.length > 0) await player.unlockAudio();
-        if (player.getSnapshot().phase === 'ended') await player.dispatch({ type: 'seek', positionSeconds: 0 });
+        if (player.getSnapshot().phase === 'ended') { if (vod) { vodSeek.current?.(0); return; } await player.dispatch({ type: 'seek', positionSeconds: 0 }); }
         await player.dispatch({ type: 'play' });
       }
     } catch (reason) { error(reason); }
   };
-  const start = snapshot?.seekableStartSeconds ?? 0;
-  const end = snapshot?.seekableEndSeconds ?? snapshot?.durationSeconds ?? 0;
-  const position = snapshot?.positionSeconds ?? 0;
-  const isLive = snapshot?.isLive ?? item.type === 'live';
-  const seek = (value: number) => { setScrub(null); if (!isLive) void dispatch({ type: 'seek', positionSeconds: Math.max(start, Math.min(end, value)) }); };
+  const start = view?.seekableStartSeconds ?? 0;
+  const end = view?.seekableEndSeconds ?? view?.durationSeconds ?? 0;
+  const position = view?.positionSeconds ?? 0;
+  const isLive = view?.isLive ?? item.type === 'live';
+  const seek = (value: number) => { setScrub(null); if (isLive) return; const target = Math.max(start, Math.min(end, value)); if (vod) vodSeek.current?.(target); else void dispatch({ type: 'seek', positionSeconds: target }); };
   const skip=(side:'left'|'right')=>{
     if(isLive || end<=start || failed)return;
     const amount=side==='left'?-10:10;seek(position+amount);
@@ -284,7 +297,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
       <div className="tesplayer-timeline">
         {isLive ? <LiveIndicator playing={snapshot?.phase === 'playing'} /> : <>
           <input aria-label="Seek playback" type="range" min={start} max={Math.max(start, end)} step="0.1" value={scrub ?? Math.min(end, position)} disabled={!snapshot || end <= start || busy} onChange={(e) => setScrub(Number(e.target.value))} onPointerUp={(e) => seek(Number(e.currentTarget.value))} onKeyUp={(e) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) seek(Number(e.currentTarget.value)); }} style={{ '--progress': `${end > start ? ((scrub ?? position) - start) / (end - start) * 100 : 0}%` } as React.CSSProperties} />
-          <span>{`${time(scrub ?? position)} / ${time(snapshot?.durationSeconds || 0)}`}</span>
+          <span>{`${time(scrub ?? position)} / ${time(view?.durationSeconds || 0)}`}</span>
         </>}
       </div>
       <div className="tesplayer-toolbar">
@@ -311,7 +324,7 @@ export default function TesPlayer({ playback, item, resume, plexCompatibility, c
           <div className="player-setting-row"><span>Speed</span><div className="player-stepper"><button aria-label="Decrease playback speed" disabled={!snapshot||snapshot.isLive||busy||(snapshot.playbackRate||1)<=.25} onClick={()=>void dispatch({type:'set-rate',rate:Math.max(.25,(snapshot?.playbackRate||1)-.25)})}><Minus size={18}/></button><output>{snapshot?.playbackRate||1}×</output><button aria-label="Increase playback speed" disabled={!snapshot||snapshot.isLive||busy||(snapshot.playbackRate||1)>=2} onClick={()=>void dispatch({type:'set-rate',rate:Math.min(2,(snapshot?.playbackRate||1)+.25)})}><Plus size={18}/></button></div></div>
           {(snapshot?.audioTracks.length||0)>1&&<div className="player-setting-row"><span>Audio</span><div className="player-track-choices">{snapshot?.audioTracks.map(track=><button className="player-choice" aria-pressed={snapshot.selectedAudioTrackId===track.id} key={track.id} disabled={busy} onClick={()=>void dispatch({type:'select-audio-track',trackId:track.id})}><Languages size={16}/>{track.label}</button>)}</div></div>}
           {(playback.carMode || carModeHeight)&&<div className="player-setting-row" title="The server converts live channels to 30 fps at a smaller size: smoother on a car screen and lighter on mobile data (720p about 3 Mbps, 480p about 1.3 Mbps)."><span>Car mode</span><div className="player-track-choices" role="group" aria-label="Car mode">{([[null,'Off'],[720,'720p'],[480,'480p']] as [CarModeHeight|null,string][]).map(([height,label])=><button key={label} className="player-choice" aria-pressed={carModeHeight===height} aria-label={height?`Car mode ${label}`:'Car mode off'} disabled={busy} onClick={()=>chooseCarMode(height)}>{label}</button>)}</div></div>}
-          <div className="player-setting-row"><span>Limit to 30 fps</span><button className={`player-mode-toggle ${halfFrameRate?'enabled':''}`} role="switch" aria-checked={halfFrameRate} aria-label="Limit 60 fps video to 30 fps" title="Shows every other frame of 50/60 fps video. Can look smoother on slower screens." disabled={busy} onClick={()=>{const value=!halfFrameRate;writeDevicePreference(HALF_FRAME_RATE_KEY,value);if(!isLive&&snapshot)restartAt.current=snapshot.positionSeconds;setHalfFrameRate(value);}}><span className="toggle-track"><i/></span><span>{halfFrameRate?'On':'Off'}</span></button></div>
+          <div className="player-setting-row"><span>Limit to 30 fps</span><button className={`player-mode-toggle ${halfFrameRate?'enabled':''}`} role="switch" aria-checked={halfFrameRate} aria-label="Limit 60 fps video to 30 fps" title="Shows every other frame of 50/60 fps video. Can look smoother on slower screens." disabled={busy} onClick={()=>{const value=!halfFrameRate;writeDevicePreference(HALF_FRAME_RATE_KEY,value);if(vod&&view)vodSeek.current?.(view.positionSeconds);else if(!isLive&&snapshot)restartAt.current=snapshot.positionSeconds;setHalfFrameRate(value);}}><span className="toggle-track"><i/></span><span>{halfFrameRate?'On':'Off'}</span></button></div>
           <div className="player-setting-row"><span>Playback stats</span><button className={`player-mode-toggle ${showStats?'enabled':''}`} role="switch" aria-checked={showStats} aria-label="Show playback stats" onClick={()=>{const value=!showStats;writeDevicePreference(PLAYBACK_STATS_KEY,value);setShowStats(value);}}><span className="toggle-track"><i/></span><span>{showStats?'On':'Off'}</span></button></div>
           <button className="text-button" onClick={()=>{setPasteCaptions(true);setSettings(false);}}>Paste subtitles</button>
           <button className="text-button" disabled={!snapshot} onClick={()=>void dispatch({type:'set-rotation',degrees:(((snapshot?.rotationDegrees||0)+90)%360) as 0|90|180|270})}>Rotate picture</button>

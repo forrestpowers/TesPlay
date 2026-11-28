@@ -9,6 +9,8 @@ export function playbackPath(item: MediaItem, settings: PlaybackSettings = {}) {
   if (settings.compatibility) params.set('transcode','1');
   // Car mode also converts the audio, so it takes the place of audio conversion.
   if (settings.carMode) { params.set('compatibility','video'); params.set('carHeight',String(settings.carMode)); }
+  // Where a converted IPTV movie or episode starts; ignored when the title plays directly.
+  if (settings.vodStart !== undefined) params.set('start', String(Math.max(0, Math.floor(settings.vodStart))));
   else if (settings.audioRemux) params.set('compatibility','audio');
   if (settings.audioTrackId && settings.audioTrackId !== 'default') params.set('audioTrackId',settings.audioTrackId);
   if (settings.qualityId) params.set('qualityId',settings.qualityId);

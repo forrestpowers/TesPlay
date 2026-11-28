@@ -332,6 +332,7 @@ export function carModeTranscoder(url, token, connectHost = "") {
   if (!base.pathname.endsWith("/")) base.pathname += "/";
   return {
     endpoint: new URL("transcode", base).toString(),
+    probeEndpoint: new URL("probe", base).toString(),
     host: base.host,
     token,
     // TesPlay and Pangolin on one server: reach Pangolin over the shared Docker
@@ -560,22 +561,27 @@ export function createMediaService(ctx) {
       };
       // Car mode: the transcoder opens the provider stream itself and returns a
       // lighter MPEG-TS stream (720p30 H.264, stereo AAC) that is relayed here.
-      if (item.remux === "video") {
-        if (!transcoder) throw providerError("Car mode needs a transcoder configured on the server.", 503);
+      if (item.remux === "video" || item.remux === "vod") {
+        const vod = item.remux === "vod";
+        if (!transcoder) throw providerError(vod ? "This title needs the transcoder, which is not configured on the server." : "Car mode needs a transcoder configured on the server.", 503);
         res.status(200).setHeader("Content-Type", "video/mp2t");
         if (req.method === "HEAD") return res.end();
         const unavailable = (status, reason) => {
           // Logged without the channel address, which carries provider credentials.
-          console.warn(`Car mode failed (${transcoder.host}): ${reason}`);
+          console.warn(`${vod ? "Conversion" : "Car mode"} failed (${transcoder.host}): ${reason}`);
           // The stream's video/mp2t type is already set; label the explanation as JSON.
-          return res.status(status).type("application/json").json({ error: `Car mode is unavailable: ${reason}` });
+          return res.status(status).type("application/json").json({ error: `${vod ? "This title cannot be converted" : "Car mode is unavailable"}: ${reason}` });
         };
         let converted;
         try {
           converted = await requestRemote(transcoder.endpoint, {
             method: "POST",
             headers: { Authorization: `Bearer ${transcoder.token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ url: item.url, ...(item.transcodeHeight ? { height: item.transcodeHeight } : {}) }),
+            body: JSON.stringify({
+              url: item.url,
+              ...(item.transcodeHeight ? { height: item.transcodeHeight } : {}),
+              ...(vod ? { mode: "vod", start: item.transcodeStart || 0, ...(item.transcodeFps ? { fps: item.transcodeFps } : {}) } : {}),
+            }),
             allowedPrivateHosts: transcoder.allowedPrivateHosts, connectHost: transcoder.connectHost,
             timeout: 60000, signal: controller.signal, onSocket: retainSocket,
           });
@@ -1006,5 +1012,19 @@ export function createMediaService(ctx) {
       res.json({ released: true });
     } catch (error) { next(error); }
   }
-  return { register, handler, heartbeatHandler, releaseHandler, carModeAvailable: !!transcoder };
+  /** Asks the transcoder what an IPTV movie or episode contains (codecs, duration). */
+  async function probeTitle(url) {
+    if (!transcoder) return null;
+    const response = await requestRemote(transcoder.probeEndpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${transcoder.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+      allowedPrivateHosts: transcoder.allowedPrivateHosts, connectHost: transcoder.connectHost,
+      timeout: 40000,
+    });
+    const text = await readBody(response, 64 * 1024);
+    if (response.statusCode !== 200) throw providerError("The transcoder could not read this title.", 502);
+    return JSON.parse(text);
+  }
+  return { register, handler, heartbeatHandler, releaseHandler, probeTitle, carModeAvailable: !!transcoder };
 }

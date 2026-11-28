@@ -56,6 +56,9 @@ export default function Player({
     [countdown, setCountdown] = useState<number | null>(null),
     [autoplayCancelled, setAutoplayCancelled] = useState(false),
     [compatible, setCompatible] = useState(!!settings.compatibility), [resolveAttempt,setResolveAttempt]=useState(0);
+  // A converted IPTV movie or episode seeks by restarting its conversion at a new position.
+  const [vodStart, setVodStart] = useState<number | null>(null);
+  const convertible = item.providerType === 'xtream' && (item.type === 'movie' || item.type === 'episode');
   // Car mode belongs to this channel: changing channel or closing the player turns it off.
   const carModeChannel = channelOf(item);
   useEffect(() => () => clearCarMode(), [carModeChannel]);
@@ -105,7 +108,7 @@ export default function Player({
     const d = dialog.current!;
     return retainPlayerDialog(d);
   }, []);
-  useEffect(()=>{resumeRef.current=settings.startOver?0:resume;resumeLoaded.current=false;setCompatible(!!settings.compatibility);},[item.id,item.connectionId,item.type,settings.compatibility,settings.startOver]);
+  useEffect(()=>{resumeRef.current=settings.startOver?0:resume;resumeLoaded.current=false;setCompatible(!!settings.compatibility);setVodStart(null);},[item.id,item.connectionId,item.type,settings.compatibility,settings.startOver]);
   useEffect(() => {
     const controller = new AbortController();
     let dead = false;
@@ -119,7 +122,7 @@ export default function Player({
       try {
         // Car mode is a per-device choice for live IPTV; the server ignores it without a transcoder.
         const carMode = item.type === 'live' && ['xtream','m3u'].includes(item.providerType || '') ? effectiveCarMode(carModeChannel, defaultCarMode) : null;
-        const p = await resolvePlayback(item,{...settings,compatibility:compatible,...(carMode?{carMode}:{})},controller.signal);
+        const p = await resolvePlayback(item,{...settings,compatibility:compatible,...(carMode?{carMode}:{}),...(convertible?{vodStart:vodStart ?? resumeRef.current ?? 0}:{})},controller.signal);
         if (!dead&&!resumeLoaded.current) {
           if (settings.startOver) resumeRef.current=0;
           else if (p.resumeSeconds!==undefined) resumeRef.current=p.resumeSeconds;
@@ -179,6 +182,7 @@ export default function Player({
               canTranscode={canTranscode}
               onCompatibilityChange={setCompatible}
               onRetry={()=>setResolveAttempt(n=>n+1)}
+              onVodSeek={seconds=>{setVodStart(Math.max(0,seconds));setResolveAttempt(n=>n+1);}}
               previous={previous} next={next} onNavigate={onNext}
               onProgress={(seconds, duration, state) => {
                 resumeRef.current=seconds;
