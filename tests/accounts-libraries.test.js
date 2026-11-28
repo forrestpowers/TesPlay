@@ -102,14 +102,13 @@ test('legacy account preference rows migrate in place and initialized Shorts cho
 });
 
 test('owner creates members, shares encrypted connectors, resets passwords and disables accounts',async t=>{
-  const f=await fixture(t),c=f.connection('youtube',{authMode:'apiKey',apiKey:'private-fixture-key'});
+  const f=await fixture(t),c=f.connection('youtube',{authMode:'innertube',tvRefreshToken:'private-fixture-key'});
   const m=await f.member([grant(c.id,['video'])]);
   const visible=await m.request('/api/connections');assert.equal(visible.data.connections.length,1);assert.equal(visible.data.connections[0].shared,true);assert.ok(!JSON.stringify(visible.data).includes('private-fixture-key'));
   assert.equal((await m.request('/api/accounts')).status,403);
   assert.equal((await m.request('/api/accounts',{name:'Intruder',email:'another@tesplay.test',password})).status,403);
   assert.equal((await m.request('/api/connections',{name:'Own connector',type:'local',config:{rootPath:'/tmp'}})).status,400,'server folders are no longer offered');
   assert.equal((await m.request(`/api/connections/${c.id}/config`)).status,403);
-  assert.equal((await m.request(`/api/youtube/auth?connectionId=${c.id}`)).status,403);
   const reset=await f.owner(`/api/accounts/${m.id}`,{password:'replacement member password'},'PATCH');assert.equal(reset.status,200);
   assert.equal((await m.request('/api/connections')).status,401);
   assert.equal((await m.request('/api/auth/login',{email:'passenger@tesplay.test',password})).status,401);
@@ -126,7 +125,7 @@ test('owner creates members, shares encrypted connectors, resets passwords and d
 });
 
 test('owner deletes a member and their private state while keeping the owner, other members and shared connections',async t=>{
-  const f=await fixture(t),c=f.connection('youtube',{authMode:'apiKey',apiKey:'private-fixture-key'});
+  const f=await fixture(t),c=f.connection('youtube',{authMode:'innertube',tvRefreshToken:'private-fixture-key'});
   const member=await f.member([grant(c.id,['video'])]);
   const ownerId=f.store.findUser('owner@tesplay.test').id;
   const other=await f.owner('/api/accounts',{name:'Other member',username:'other_member',password,grants:[grant(c.id,['video'])]});
@@ -154,7 +153,7 @@ test('owner deletes a member and their private state while keeping the owner, ot
   assert.equal(f.store.db.prepare('SELECT COUNT(*) AS count FROM connection_grants WHERE user_id=?').get(member.id).count,0);
   assert.equal(f.store.db.prepare('SELECT COUNT(*) AS count FROM user_preferences WHERE user_id=?').get(member.id).count,0);
   assert.ok(f.store.findUserById(ownerId));assert.ok(f.store.findUserById(other.data.account.id));
-  assert.equal(f.store.getConnection(ownerId,c.id).config.apiKey,'private-fixture-key');
+  assert.equal(f.store.getConnection(ownerId,c.id).config.tvRefreshToken,'private-fixture-key');
   assert.equal((await f.owner('/api/accounts')).data.accounts.length,2);
   assert.deepEqual(f.store.db.prepare('PRAGMA foreign_key_check').all(),[]);
   assert.equal((await f.owner(`/api/accounts/${member.id}`,{},'DELETE')).status,404);
@@ -218,18 +217,17 @@ test('separate accounts stream concurrently and media references cannot cross ac
   await f.owner(`/api/accounts/${m.id}`,{grants:[]},'PATCH');assert.equal((await m.request(memberStream.data.url)).status,403);assert.equal((await m.request('/api/connections')).data.connections.length,0);
 });
 
-test('starred YouTube feeds and ordered watch playlists are isolated by profile and persist',async t=>{
-  const a='UC'+'a'.repeat(22),b='UC'+'b'.repeat(22);
-  const f=await fixture(t,{remoteData:async input=>{const u=new URL(input);if(u.pathname.endsWith('/subscriptions'))return{items:[a,b].map(id=>({snippet:{resourceId:{channelId:id}}}))};if(u.pathname.endsWith('/channels')){assert.equal(u.searchParams.get('id'),a);return{items:[{contentDetails:{relatedPlaylists:{uploads:'UU'+'a'.repeat(22)}}}]};}if(u.pathname.endsWith('/playlistItems'))return{items:[{contentDetails:{videoId:'abcdefghijk'},snippet:{title:'Latest upload',channelId:a}},{contentDetails:{videoId:'lmnopqrstuv'},snippet:{title:'Earlier upload',channelId:a}}]};throw Error('Unexpected YouTube request');}});
-  const c=f.connection('youtube',{authMode:'oauth',accessToken:'fixture-access',refreshToken:'fixture-refresh',expiresAt:Date.now()+3600000},'API');
-  assert.deepEqual((await f.owner(`/api/youtube/${c.id}/feed`)).data.items,[]);
+test('starred YouTube channels and ordered watch playlists are isolated by profile and persist',async t=>{
+  const a='UC'+'a'.repeat(22);
+  const f=await fixture(t);
+  const c=f.connection('youtube',{authMode:'innertube',tvRefreshToken:'fixture-refresh'},'API');
+  const video=(id,title)=>({id,connectionId:c.id,source:'YouTube',providerType:'youtube',type:'video',title,channelId:a});
   const original=(await f.owner('/api/auth/status')).data.activeProfileId;
-  await f.owner('/api/library/stars',{connectionId:c.id,id:a,kind:'channel',title:'My favorite channel'});
-  const feed=await f.owner(`/api/youtube/${c.id}/feed`);assert.equal(feed.data.totalChannels,1);assert.equal(feed.data.channelRows[0].items[0].title,'Latest upload');assert.equal(feed.data.items[0].source,'YouTube');
-  for(const item of feed.data.items)assert.equal((await f.owner('/api/library/queue',{action:'add',item})).status,200);
+  assert.equal((await f.owner('/api/library/stars',{connectionId:c.id,id:a,kind:'channel',title:'My favorite channel'})).status,200);
+  for(const item of [video('abcdefghijk','Latest upload'),video('lmnopqrstuv','Earlier upload')])assert.equal((await f.owner('/api/library/queue',{action:'add',item})).status,200);
   const state=await f.owner('/api/library/state');assert.deepEqual(state.data.queue.map(i=>i.title),['Latest upload','Earlier upload']);assert.equal(state.data.favorites.length,0);
   const second=await f.owner('/api/profiles',{name:'Second',color:'#658a73'});const id=second.data.profiles.find(p=>p.id!==original).id;
-  await f.owner(`/api/profiles/${id}/select`,{});assert.deepEqual((await f.owner('/api/library/state')).data.queue,[]);assert.deepEqual((await f.owner(`/api/youtube/${c.id}/feed`)).data.items,[]);
+  await f.owner(`/api/profiles/${id}/select`,{});const other=(await f.owner('/api/library/state')).data;assert.deepEqual(other.queue,[]);assert.deepEqual(other.stars,[]);
   await f.owner(`/api/profiles/${original}/select`,{});assert.equal((await f.owner('/api/library/state')).data.queue.length,2);
   const reopened=createStore({dataDir:f.dataDir});assert.equal(reopened.queue(original).length,2);assert.equal(reopened.stars(original)[0].id,a);reopened.close();
 });

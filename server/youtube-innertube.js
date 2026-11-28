@@ -31,12 +31,13 @@ const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/, CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/, PL
 const SHORT_TYPES = new Set(['ReelItem', 'ShortsLockupView']);
 const text = value => plainText(value == null ? '' : typeof value === 'string' ? value : typeof value.text === 'string' ? value.text : typeof value.toString === 'function' ? value.toString() : '').trim();
 
-export function isInnertubeMode(c) { return c?.config?.authMode === 'innertube'; }
+/** Every YouTube connection signs in with the phone (InnerTube); the Data API key and web sign-in are gone. */
+export function isInnertubeMode(c) { return c?.type === 'youtube' || c?.config?.authMode === 'innertube'; }
 export function innertubeSignedIn(c) { return isInnertubeMode(c) && typeof c.config.tvRefreshToken === 'string' && c.config.tvRefreshToken.length > 0; }
 export const SIGN_IN_REQUIRED = 'Sign in with Google on this screen from YouTube settings to see your Home feed, subscriptions and history.';
 export const RECONNECT_REQUIRED = 'Google authorization for YouTube has expired or was revoked. Open Connections and sign in on this screen again.';
 
-/** "3 days ago" style text to an ISO date, so feeds sort newest first alongside Data API items. */
+/** "3 days ago" style text to an ISO date, so feeds sort newest first. */
 export function relativeDate(value, now = Date.now()) {
   const match = /(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago/i.exec(String(value || ''));
   if (!match) return undefined;
@@ -363,7 +364,9 @@ export function createInnertubeService({
     if (!data.refresh_token) throw providerError('Google did not return a refresh token. Remove TesPlay from your Google account permissions and sign in again.', 502);
     forgetClients(c.id);
     saveConfig(req, c, {
-      authMode: 'innertube', tvAccessToken: data.access_token, tvRefreshToken: data.refresh_token, tvExpiresAt: now() + Number(data.expires_in || 3600) * 1000, tvScope: entry.scope,
+      authMode: 'innertube', tvAccessToken: data.access_token,
+      // Settings of the retired Data API connection go once the phone sign-in replaces them.
+      apiKey: null, clientId: null, clientSecret: null, accessToken: null, refreshToken: null, expiresAt: null, tvRefreshToken: data.refresh_token, tvExpiresAt: now() + Number(data.expires_in || 3600) * 1000, tvScope: entry.scope,
       // Tokens belong to the client that issued them; keep YouTube's client beside them for refreshes.
       tvBuiltinClientId: client.kind === 'youtube' ? client.clientId : null, tvBuiltinClientSecret: client.kind === 'youtube' ? client.clientSecret : null,
     });
@@ -720,7 +723,7 @@ export function createInnertubeService({
     _internal: { pending, pages, clients, resolved } };
 }
 
-/** Express routes under /api/youtube/:connectionId for InnerTube-mode connections. Registered before the Data API routes; non-InnerTube connections fall through. */
+/** Express routes under /api/youtube/:connectionId for YouTube connections. */
 export function registerInnertubeRoutes(app, { connection, route, art, service, limiter = (req, res, next) => next() }) {
   const root = '/api/youtube/:connectionId';
   const token = req => { const value = String(req.query.pageToken || ''); if (value.length > 64 || !/^[A-Za-z0-9_-]*$/.test(value)) throw providerError('Invalid YouTube page.'); return value || undefined; };

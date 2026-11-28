@@ -30,27 +30,12 @@ export async function loadHomeConnection(c: Connection, request: Request, signal
   try {
     if (!c.configured) return { shelves, issues: ['Finish setting up this connection in Connections.'] };
     if (c.type === 'youtube') {
-      // YouTube signed in on the screen (InnerTube): the latest uploads from your subscriptions.
-      if (c.authMode === 'innertube') {
-        if (!c.oauthAuthorized) return { shelves, issues: [] };
-        const data = await request(`/youtube/${encodeURIComponent(c.id)}/feed`, signal);
-        signal.throwIfAborted();
-        shelf('subscriptions', 'YouTube · Latest from your subscriptions', data.items || []);
-        return { shelves, issues };
-      }
-      // The older Google authorization: starred channels. Without either, Home has no YouTube rows.
-      if (c.authMode !== 'oauth' || !c.oauthAuthorized) return { shelves, issues: [] };
-      const offsets=new Set<number>(); let offset: number | undefined;
-      do {
-        const data = await request(`/youtube/${encodeURIComponent(c.id)}/feed${offset===undefined?'':`?offset=${offset}`}`, signal);
-        signal.throwIfAborted();
-        if(data.channelRows) for(const row of data.channelRows) shelf('channel:'+row.id,`YouTube · ${row.title}`,row.items,{channel:{id:row.id,title:row.title}});
-        else shelf('subscriptions', 'YouTube · Starred channels', data.items);
-        if (data.partial && !issues.length) issues.push('Some starred channels could not load.');
-        offset=data.nextOffset??undefined;
-        if(offset===undefined||offsets.has(offset))break;
-        offsets.add(offset);
-      } while (!signal.aborted);
+      // The latest uploads from your subscriptions, once the connection is signed in.
+      if (!c.oauthAuthorized) return { shelves, issues: [] };
+      const data = await request(`/youtube/${encodeURIComponent(c.id)}/feed`, signal);
+      signal.throwIfAborted();
+      shelf('subscriptions', 'YouTube · Latest from your subscriptions', data.items || []);
+      return { shelves, issues };
     } else if (c.type === 'xtream') {
       const loaded = (id:string) => !Array.isArray(c.loadedCategories) || c.loadedCategories.includes(id);
       // Movies and series only when the server offers them (most are H.265, which the car cannot decode).

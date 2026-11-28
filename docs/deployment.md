@@ -44,9 +44,7 @@ Use the same `--env-file` on both commands if your installation uses a custom en
 
 ## Reconnect expired YouTube authorization
 
-If Google expires or revokes the saved authorization, subscriptions, playlists and the personal feed require another Google sign-in. TesPlay reports this as HTTP 409 with a reconnect message; it is not a resolver or server outage. Open **Connections**, find the existing YouTube connection, and choose **Reconnect Google**. Keep the existing connection so its starred channels, watch playlist and history continue to use the same ID. If the message instead identifies invalid OAuth client settings, correct the client ID and secret there before reconnecting.
-
-Public video playback uses the separate optional resolver. A working resolver health check or a successful sample video resolution does not verify Google account authorization.
+If Google expires or revokes the saved sign-in, the YouTube page asks you to sign in with your phone again. Keep the existing connection so its starred channels, watch playlist and history keep the same ID.
 
 ## Your public hostname and Cloudflare Access
 
@@ -136,15 +134,9 @@ Use your own authorized accounts to check a new installation. See the [maintaine
 
 Use the browser's normal fullscreen controls while parked. Firmware determines how much system UI can be hidden. The app cannot reliably infer gear from a regular web page; it does not claim a vehicle safety interlock.
 
-## YouTube OAuth and phone QR setup
-
-YouTube supports a saved Data API key or an OAuth web client with the YouTube Data API enabled. Register `https://media.example.com/api/youtube/callback` as its redirect URI. Save the client ID and secret in TesPlay account settings, select Google OAuth and authorize on your phone. Offline tokens are encrypted and refreshed server-side. Google may still require fresh consent after revocation, token expiry, client changes or OAuth testing-mode limits. See [Google’s YouTube OAuth guide](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps).
-
-Open YouTube from the main navigation for subscriptions, channel uploads, playlists, search and profile-specific watch history. Edit your existing YouTube connection and choose Google OAuth to unlock account subscriptions and private playlists; a Data API key can only browse public content. Both channel and subscription lists have pagination. The suggestions feed draws from subscriptions, includes only starred subscriptions and orders uploads newest first. Google's Data API does not expose account watch history or the YouTube Home feed; the history displayed here records watches inside TesPlay. See [subscriptions authorization](https://developers.google.com/youtube/v3/docs/subscriptions/list) and [YouTube API changes](https://developers.google.com/youtube/v3/revision_history). For the real Home feed and account history use the InnerTube mode below.
-
 ## YouTube: sign in on this screen (InnerTube)
 
-The **Sign in on this screen** mode signs the TesPlay server in to YouTube's InnerTube API (the API the YouTube TV app uses) with the `youtubei.js` client. No redirect URL or `PUBLIC_URL` is involved: TesPlay requests a device code, shows the short user code plus `google.com/device` (also as a QR code), and polls until the code is approved on your phone.
+YouTube connects only by signing in with your phone (the Data API key and Google web sign-in are gone; an older connection that used them asks for the phone sign-in, and its old settings are dropped once you sign in). The sign-in signs the TesPlay server in to YouTube's InnerTube API (the API the YouTube TV app uses) with the `youtubei.js` client. No redirect URL or `PUBLIC_URL` is involved: TesPlay requests a device code, shows the short user code plus `google.com/device` (also as a QR code), and polls until the code is approved on your phone.
 
 By default the sign-in uses the OAuth client of YouTube's own TV app: `youtubei.js` reads its ID and secret from `youtube.com/tv`, the device code and token requests go to `youtube.com/o/oauth2/*` with the TV scope (`http://gdata.youtube.com`), and the client identity is remembered encrypted on the connection (`tvBuiltinClientId`, `tvBuiltinClientSecret`) so refreshes do not depend on youtube.com/tv staying parseable. YouTube can change or block this at any time; that is the trade-off every third-party TV sign-in makes. To use your own client instead, create one of type **TVs and Limited Input devices** in a Google Cloud project with the YouTube Data API v3 enabled and set `GOOGLE_TV_CLIENT_ID` / `GOOGLE_TV_CLIENT_SECRET` for the installation (Compose passes both through) or save it per connection (`tvClientId`, `tvClientSecret`); such a client goes through Google's documented `oauth2.googleapis.com` device endpoints, requesting the TV scope first and `https://www.googleapis.com/auth/youtube` if Google refuses it. Device-flow tokens are stored encrypted in the connection like the web-client tokens (`tvAccessToken`, `tvRefreshToken`, `tvExpiresAt`) and refreshed server-side; changing your client ID or secret clears them.
 

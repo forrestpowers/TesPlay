@@ -7,11 +7,10 @@ import { api, errorMessage } from './api';
 import IptvCategoryPicker from './IptvCategoryPicker';
 import type { IptvCategory, IptvSelection } from './IptvCategoryPicker';
 import YouTubeDeviceSignIn from './YouTubeDeviceSignIn';
-import { connectionFields as fieldsFor, youtubeAuthMode } from './connection-fields';
-import type { YouTubeAuthMode } from './connection-fields';
+import { connectionFields as fieldsFor } from './connection-fields';
 import type { Connection } from './types';
 
-export type ConnectionFormOptions = { playlist: string; youtubeMode: YouTubeAuthMode; loadedCategories?:IptvSelection };
+export type ConnectionFormOptions = { playlist: string; loadedCategories?:IptvSelection };
 
 export default function ConnectionEditor({ adding, editing, editConfig, configuredFields, preview, busy, error, notice, onRefresh,
   onClose: close, onSignIn, onPhoneSetup, onTypeChange, onSubmit }: {
@@ -31,10 +30,9 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
   onSubmit: (event: FormEvent<HTMLFormElement>, options: ConnectionFormOptions) => Promise<void>;
 }) {
   const [playlist, setPlaylist] = useState('');
-  // YouTube connects only by signing in on this screen; saving an older Data API connection switches it over.
-  const [youtubeMode] = useState<YouTubeAuthMode>(() => adding === 'youtube' ? 'innertube' : editing ? youtubeAuthMode(editConfig, configuredFields) : 'apiKey');
-  const connectionFields = fieldsFor(adding, youtubeMode);
-  const youtubeDevice = adding === 'youtube' && youtubeMode === 'innertube';
+  // YouTube connects only by signing in with the phone.
+  const connectionFields = fieldsFor(adding);
+  const youtubeDevice = adding === 'youtube';
 
   const newIptv = !editing && ['xtream', 'm3u'].includes(adding);
   const formRef = useRef<HTMLFormElement>(null), categoryRequest = useRef<AbortController | null>(null);
@@ -73,7 +71,7 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
       return;
     }
     if (newIptv && !categoriesReady) { event.preventDefault(); return; }
-    void onSubmit(event, {playlist, youtubeMode, ...(newIptv ? {loadedCategories:selection} : {})});
+    void onSubmit(event, {playlist, ...(newIptv ? {loadedCategories:selection} : {})});
   }
   return (
     <Modal
@@ -127,7 +125,7 @@ export default function ConnectionEditor({ adding, editing, editConfig, configur
               {!editing && ' Save first; the sign-in code appears next.'}
             </p>
           )}
-          {youtubeDevice && editing && <YouTubeDeviceSignIn connectionId={editing.id} signedIn={!!editing.oauthAuthorized && editing.authMode === 'innertube'} onChanged={async () => { await onRefresh?.(); }} />}
+          {youtubeDevice && editing && <YouTubeDeviceSignIn connectionId={editing.id} signedIn={!!editing.oauthAuthorized} onChanged={async () => { await onRefresh?.(); }} />}
           {!categoryStep && adding === "xtream" && (
             <p className="form-help">
               Add as many IPTV accounts as you like. They share one library.

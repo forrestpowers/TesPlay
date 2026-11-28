@@ -102,13 +102,13 @@ export default function Connections({
       setBusy(false);
     }
   }
-  async function submit(e: FormEvent<HTMLFormElement>, { playlist, youtubeMode, loadedCategories }: ConnectionFormOptions) {
+  async function submit(e: FormEvent<HTMLFormElement>, { playlist, loadedCategories }: ConnectionFormOptions) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget));
     await run(async () => {
       const { name, ...config } = f;
       if (adding === "m3u" && playlist) config.content = playlist;
-      if (adding === "youtube") config.authMode = youtubeMode;
+      if (adding === "youtube") config.authMode = "innertube";
       const newIptv = !editing && ['xtream', 'm3u'].includes(adding || '');
       if (newIptv && loadedCategories === undefined) throw new Error('Load and choose IPTV categories before saving.');
       const r = await api<{ connection: Connection }>(
@@ -121,7 +121,7 @@ export default function Connections({
         editing ? "PUT" : "POST",
       );
       await onRefresh();
-      if (adding === 'youtube' && youtubeMode === 'innertube' && !editing) {
+      if (adding === 'youtube' && !editing) {
         // Keep the editor open on the saved connection so the Google sign-in code can be requested next.
         const saved = await api<{ connection: Connection; config: Record<string, string>; configuredFields: string[] }>(`/connections/${r.connection.id}/config`);
         setEditing(saved.connection); setEditConfig(saved.config); setConfiguredFields(saved.configuredFields);
@@ -141,7 +141,7 @@ export default function Connections({
     return r.connection;
   }, [onRefresh]);
   // A YouTube connection left half-way through sign-in is reused rather than duplicated.
-  const pendingYouTube = connections.find(c => c.type === 'youtube' && c.authMode === 'innertube' && !c.oauthAuthorized && !c.shared);
+  const pendingYouTube = connections.find(c => c.type === 'youtube' && !c.oauthAuthorized && !c.shared);
   const youtubeSignedIn = useCallback(async () => {
     const created = youtubeCreated.current || pendingYouTube;
     await onRefresh();

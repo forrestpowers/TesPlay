@@ -17,7 +17,6 @@ export function assertSupportedConnection(c) {
   return c;
 }
 const editablePublicConfigFields = new Set([
-  "clientId",
   "tvClientId",
   "authMode",
 ]);
@@ -131,23 +130,6 @@ export function registerConnectionRoutes(app, { store, ctx, requireOwner }) {
             ),
           )
         : config;
-    if (
-      existing.type === "youtube" &&
-      safeUpdate &&
-      typeof safeUpdate === "object" &&
-      ["clientId", "clientSecret"].some(
-        (field) =>
-          Object.hasOwn(safeUpdate, field) &&
-          safeUpdate[field] !== existing.config[field],
-      )
-    ) {
-      // Google tokens belong to the issuing OAuth client. A user editing that
-      // client must authorize it again; ordinary internal token refreshes are
-      // unaffected because they do not go through this settings route.
-      safeUpdate.accessToken = null;
-      safeUpdate.refreshToken = null;
-      safeUpdate.expiresAt = 0;
-    }
     if (
       existing.type === "youtube" &&
       safeUpdate &&

@@ -207,7 +207,6 @@ export async function createApp(options = {}) {
     try { ctx.getManagedConnection(req,req.params.connectionId || req.params.id); next(); }
     catch(error) { next(error); }
   };
-  app.use(['/api/youtube/auth','/api/youtube/callback'],requireConnectionManager);
   app.use(['/api/youtube/:connectionId/signin','/api/youtube/:connectionId/signout'],requireConnectionManager);
   app.post('/api/connections/:id/test',requireConnectionManager,requireManagedConnection,(req,res,next)=>next());
   app.get('/api/connections/:id/categories',requireConnectionManager,requireManagedConnection,(req,res,next)=>next());

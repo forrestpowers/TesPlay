@@ -46,7 +46,7 @@ export type Connection = {
   name: string;
   createdAt: string;
   configured: boolean;
-  authMode?: "apiKey" | "oauth" | "innertube";
+  authMode?: "innertube";
   oauthAuthorized?: boolean;
   summary?: string;
   shared?: boolean;

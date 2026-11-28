@@ -211,19 +211,11 @@ export async function readBody(stream, max = 16 * 1024 * 1024) {
 export async function remoteData(url, options = {}) {
   const response = await requestRemote(url, options);
   if (response.statusCode < 200 || response.statusCode >= 300) {
-    let oauthCode;
-    if (options.oauthToken) {
-      // OAuth errors need an actionable classification, never Google's raw body,
-      // which may contain client credentials or other private provider details.
-      try {
-        const data = JSON.parse(await readBody(response, 16 * 1024));
-        if (['invalid_grant', 'invalid_client'].includes(data.error)) oauthCode = data.error;
-      } catch { response.destroy(); }
-    } else response.resume();
-    throw Object.assign(providerError(
+    response.resume();
+    throw providerError(
       `Provider returned HTTP ${response.statusCode}. Check the connection and permissions.`,
       response.statusCode === 401 || response.statusCode === 403 ? 400 : 502,
-    ), { oauthCode });
+    );
   }
   const body = await readBody(response, options.maxBytes);
   if (options.text) return body;

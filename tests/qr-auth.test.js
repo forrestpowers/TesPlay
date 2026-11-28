@@ -334,77 +334,45 @@ test("connection editing never returns credentials and blank secret inputs prese
   const stranger = f.client();
   const auth = await owner.request("/api/auth/setup", ownerDetails);
   const config = {
-    apiKey: "private-key",
-    clientId: "public-client-id",
-    clientSecret: "private-client-secret",
-    refreshToken: "private-refresh-token",
-    accessToken: "private-access-token",
+    tvClientId: "public-client-id",
+    tvClientSecret: "private-client-secret",
+    tvRefreshToken: "private-refresh-token",
+    tvAccessToken: "private-access-token",
     url: "https://example.com/?password=private-password",
     username: "private-username",
     password: "private-password",
-    authMode: "oauth",
+    authMode: "innertube",
   };
-  const created = await owner.request("/api/connections", {
-    type: "youtube",
-    name: "My YouTube",
-    config,
-  });
+  const created = await owner.request("/api/connections", { type: "youtube", name: "My YouTube", config });
   const id = created.data.connection.id;
   const path = `/api/connections/${id}/config`;
-  assert.equal(
-    (await stranger.request(path, null, { method: "GET" })).status,
-    401,
-  );
+  assert.equal((await stranger.request(path, null, { method: "GET" })).status, 401);
   const details = await owner.request(path, null, { method: "GET" });
-  assert.deepEqual(details.data.config, {
-    clientId: "public-client-id",
-    authMode: "oauth",
-  });
+  assert.deepEqual(details.data.config, { tvClientId: "public-client-id", authMode: "innertube" });
   assert.equal(JSON.stringify(details.data).includes("private-"), false);
-  assert.equal(details.data.connection.authMode, "oauth");
+  assert.equal(details.data.connection.authMode, "innertube");
   assert.equal(details.data.connection.oauthAuthorized, true);
-  for (const field of Object.keys(config))
-    assert.ok(details.data.configuredFields.includes(field));
-  assert.equal(
-    (
-      await owner.request(
-        `/api/connections/${id}`,
-        {
-          config: {
-            apiKey: "",
-            username: " ",
-            password: "",
-            url: "",
-            refreshToken: "",
-            clientSecret: "",
-            authMode: "apiKey",
-          },
-        },
-        { method: "PUT" },
-      )
-    ).status,
-    200,
-  );
-  const stored = f.store.getConnection(auth.data.user.id, id).config;
-  assert.deepEqual(stored, { ...config, authMode: "apiKey" });
-  assert.equal(
-    f.store.db
-      .prepare("SELECT encrypted_config FROM connections WHERE id=?")
-      .get(id)
-      .encrypted_config.includes("private-"),
-    false,
-  );
-  const updated = await owner.request(
-    `/api/connections/${id}`,
-    { config: { apiKey: "new-private-key" } },
-    { method: "PUT" },
-  );
+  for (const field of Object.keys(config)) assert.ok(details.data.configuredFields.includes(field));
+  const blanks = { username: " ", password: "", url: "", tvRefreshToken: "", tvClientSecret: "", authMode: "innertube" };
+  assert.equal((await owner.request(`/api/connections/${id}`, { config: blanks }, { method: "PUT" })).status, 200);
+  assert.deepEqual(f.store.getConnection(auth.data.user.id, id).config, config);
+  assert.equal(f.store.db.prepare("SELECT encrypted_config FROM connections WHERE id=?").get(id).encrypted_config.includes("private-"), false);
+  const updated = await owner.request(`/api/connections/${id}`, { config: { password: "new-private-password" } }, { method: "PUT" });
   assert.equal(updated.status, 200);
-  assert.equal(updated.data.connection.authMode, "apiKey");
-  assert.equal(
-    f.store.getConnection(auth.data.user.id, id).config.apiKey,
-    "new-private-key",
-  );
+  assert.equal(updated.data.connection.oauthAuthorized, true);
+  assert.equal(f.store.getConnection(auth.data.user.id, id).config.password, "new-private-password");
+});
+
+test("an older YouTube Data API connection asks for the phone sign-in", async (t) => {
+  const f = await fixture(t);
+  const owner = f.client();
+  const auth = await owner.request("/api/auth/setup", ownerDetails);
+  const legacy = f.store.saveConnection(auth.data.user.id, { type: "youtube", name: "YouTube", config: { authMode: "oauth", apiKey: "private-key", clientId: "web-client", refreshToken: "private-refresh-token" } });
+  const listed = (await owner.request("/api/connections", null, { method: "GET" })).data.connections.find((c) => c.id === (legacy.id || legacy));
+  assert.equal(listed.authMode, "innertube");
+  assert.equal(listed.oauthAuthorized, false, "the web sign-in no longer counts");
+  assert.equal(JSON.stringify(listed).includes("private-"), false);
+  for (const path of ["/api/youtube/auth", "/api/youtube/callback"]) assert.notEqual((await owner.request(path, null, { method: "GET" })).status, 302, path);
 });
 
 test("saved episode metadata remains available for continuing a series", () => {
@@ -424,69 +392,3 @@ test("saved episode metadata remains available for continuing a series", () => {
     });
 });
 
-test("editing a Google OAuth client clears its tokens while blank secrets and internal refreshes preserve authorization", async (t) => {
-  const f = await fixture(t);
-  const client = f.client();
-  const auth = await client.request("/api/auth/setup", ownerDetails);
-  for (const type of ["youtube"]) {
-    const created = await client.request("/api/connections", {
-      type,
-      name: type,
-      config: {
-        clientId: "first-client",
-        clientSecret: "first-secret",
-        authMode: "oauth",
-        accessToken: "first-access-token",
-        refreshToken: "first-refresh-token",
-        expiresAt: Date.now() + 3_600_000,
-      },
-    });
-    const id = created.data.connection.id;
-    let changed = await client.request(
-      `/api/connections/${id}`,
-      {
-        config: { clientId: "second-client" },
-      },
-      { method: "PUT" },
-    );
-    assert.equal(changed.status, 200);
-    let config = f.store.getConnection(auth.data.user.id, id).config;
-    assert.equal(config.clientId, "second-client");
-    assert.equal(config.accessToken, null);
-    assert.equal(config.refreshToken, null);
-    assert.equal(config.expiresAt, 0);
-    f.store.saveConnection(auth.data.user.id, {
-      id,
-      config: {
-        accessToken: "refreshed-access-token",
-        refreshToken: "refreshed-refresh-token",
-        expiresAt: Date.now() + 3_600_000,
-      },
-    });
-    changed = await client.request(
-      `/api/connections/${id}`,
-      {
-        config: { clientId: "second-client", clientSecret: "" },
-      },
-      { method: "PUT" },
-    );
-    assert.equal(changed.status, 200);
-    config = f.store.getConnection(auth.data.user.id, id).config;
-    assert.equal(config.clientSecret, "first-secret");
-    assert.equal(config.refreshToken, "refreshed-refresh-token");
-    assert.equal(config.accessToken, "refreshed-access-token");
-    changed = await client.request(
-      `/api/connections/${id}`,
-      {
-        config: { clientSecret: "second-secret" },
-      },
-      { method: "PUT" },
-    );
-    assert.equal(changed.status, 200);
-    config = f.store.getConnection(auth.data.user.id, id).config;
-    assert.equal(config.clientSecret, "second-secret");
-    assert.equal(config.accessToken, null);
-    assert.equal(config.refreshToken, null);
-    assert.equal(config.expiresAt, 0);
-  }
-});

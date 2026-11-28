@@ -31,17 +31,6 @@ test('IPTV home requests only starred live categories, without movie or series p
   const empty=await loadHomeConnection(connection('m3u'),()=>{throw Error('No unstarred channels should be requested');},new AbortController().signal);
   assert.deepEqual(empty.shelves,[]);assert.deepEqual(empty.issues,[]);
 });
-test('YouTube home uses subscriptions instead of a public demo search, and stays quiet without authorization', async () => {
-  let path = '';
-  const c = { ...connection('youtube'), authMode: 'oauth', oauthAuthorized: true };
-  const result = await loadHomeConnection(c, async p => { path = p; return { items: [item('Subscribed upload', 'video', 'youtube')], partial: true }; }, new AbortController().signal);
-  assert.equal(path, '/youtube/youtube/feed');
-  assert.equal(result.shelves[0].items[0].title, 'Subscribed upload');
-  assert.equal(result.issues.length, 1);
-  const denied = await loadHomeConnection({ ...c, authMode: 'apiKey' }, () => { throw Error('Must not request public demo search'); }, new AbortController().signal);
-  assert.equal(denied.shelves.length, 0);
-  assert.deepEqual(denied.issues, [], 'no notice on Home');
-});
 test('YouTube signed in on the screen shows the latest from your subscriptions on Home', async () => {
   const paths = [];
   const signedIn = { ...connection('youtube'), authMode: 'innertube', oauthAuthorized: true };
@@ -68,12 +57,6 @@ test('aborted home requests reject instead of publishing rows for the previous p
   await assert.rejects(loadHomeConnection({ ...connection('youtube'), authMode: 'innertube', oauthAuthorized: true }, async () => { controller.abort(); return { items: [item('old-profile')] }; }, controller.signal), { name: 'AbortError' });
 });
 
-test('YouTube home keeps each starred channel rail in newest-first upload order',async()=>{
-  const c={...connection('youtube'),authMode:'oauth',oauthAuthorized:true};
-  const newest=item('Newest','video','youtube'),older=item('Older','video','youtube');
-  const result=await loadHomeConnection(c,async()=>({items:[newest,older],channelRows:[{id:'UCfavorite',title:'Favorite channel',items:[newest,older]}]}),new AbortController().signal);
-  assert.equal(result.shelves[0].title,'YouTube · Favorite channel');assert.equal(result.shelves[0].channel.id,'UCfavorite');assert.deepEqual(result.shelves[0].items.map(i=>i.id),['Newest','Older']);
-});
 const browserSource=ts.transpileModule(fs.readFileSync(new URL('../src/library-browser.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
 const {librarySources,unifiedShelves}=await import('data:text/javascript;base64,'+Buffer.from(browserSource).toString('base64'));
 test('shared library sources retain other connectors without mutating the connected accounts',()=>{
@@ -89,14 +72,6 @@ test('Live TV, Movies and Shows never request YouTube feeds, including authorize
     },new AbortController().signal,force);
     assert.deepEqual(result,[]);
   }
-});
-test('Home includes starred channels beyond the first feed page without repeating offsets',async()=>{
-  const offsets=[];
-  const result=await loadHomeConnection({...connection('youtube'),authMode:'oauth',oauthAuthorized:true},async path=>{
-    const offset=new URL(path,'https://example.test').searchParams.get('offset');offsets.push(offset);
-    return{items:[],channelRows:[{id:offset||'first',title:offset||'First channel',items:[item('upload '+(offset||'first'),'video','youtube')]}],nextOffset:offset?null:8};
-  },new AbortController().signal);
-  assert.deepEqual(offsets,[null,'8']);assert.equal(result.shelves.length,2);assert.equal(result.shelves[1].channel.id,'8');
 });
 
 test('six highlights balance three connectors and select their newest videos before older or live content',()=>{

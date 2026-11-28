@@ -156,15 +156,8 @@ export function createStore({ dataDir = resolve("data"), encryptionKey } = {}) {
         key,
         `${row.user_id}:${row.id}`,
       );
-      authorization = {
-        authMode:
-          ["apiKey", "oauth", "innertube"].includes(config.authMode)
-            ? config.authMode
-            : config.refreshToken
-              ? "oauth"
-              : "apiKey",
-        oauthAuthorized: Boolean(config.authMode === "innertube" ? config.tvRefreshToken : config.refreshToken),
-      };
+      // YouTube signs in with the phone only; an older Data API connection shows as not signed in.
+      authorization = { authMode: "innertube", oauthAuthorized: Boolean(config.tvRefreshToken) };
     }
     return {
       id: row.id,

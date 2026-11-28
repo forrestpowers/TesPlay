@@ -15,7 +15,7 @@ Scan the QR on your phone. A signed-out screen asks you to sign in and approve i
 
 On the screen choose **Sign in with your phone**, scan the QR, sign in on the phone if necessary, compare the six-digit code, and explicitly approve the screen. The code expires after five minutes and works once. The QR contains a short-lived approval credential, not your password. It is rendered locally; no QR service receives it. First-time owners can create their account on the phone using the server setup token before approving the screen.
 
-In **Settings → Your connections → Set up with QR**, scan to open account settings on your phone. Add or edit provider URLs, passwords, API keys, playlists and OAuth connections there. Your screen refreshes the connections while the setup panel is open. Empty secret fields on an edit preserve saved values. Changing a Google OAuth client requires fresh consent for that client.
+In **Settings → Your connections → Set up with QR**, scan to open account settings on your phone. Add or edit provider URLs, passwords and playlists there. Your screen refreshes the connections while the setup panel is open. Empty secret fields on an edit preserve saved values. Changing a Google OAuth client requires fresh consent for that client.
 
 Both devices must reach the same installation. A QR containing `localhost` or `127.0.0.1` cannot connect a phone to your Mac: publish the installation and set `PUBLIC_URL=https://media.example.com`, or configure a reachable LAN address for local testing. Any existing Cloudflare Access login remains required on both devices. QR login authenticates TesPlay; it does not bypass the outer Access layer.
 

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - YouTube: **Settings → Resolution** in the player lists the H.264 sizes YouTube offers for the video (up to 1080p, 60 fps where that is all a size has) beside **Auto**. The size comes straight from YouTube (no transcoding), the video reopens where it was, and the choice is remembered on that screen.
+- YouTube connects only by signing in with your phone: the Data API key and Google web sign-in modes are gone, with `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. An older connection that used them asks for the phone sign-in, which replaces its old settings.
 - Removed features nothing used: Plex, Stremio, Google Drive and server folder connections (an existing one is listed as no longer supported and can be removed), radio search, phone video uploads and pasted video links, Paste subtitles and Rotate picture in the player, the YouTube card on Home, and the Cloudflare tunnel profile and analytics script allowance.
 - IPTV shows live TV only: its movies and series (mostly H.265, which the car cannot play without transcoding) are gone from Home, the IPTV library, category setup and sharing. `IPTV_ON_DEMAND=1` brings them back. The Movies and Series tabs appear only when a connected library can fill them.
 - Stremio is no longer offered for new connections for now (Home, Connections and the sign-in page); existing Stremio connections keep working.

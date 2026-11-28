@@ -1,12 +1,10 @@
 import { plainText, mediaDate } from "./text.js";
 import { createYouTubeResolver } from "./youtube.js";
-import { registerYouTubeBrowser } from "./youtube-browser.js";
 import { createInnertubeService, registerInnertubeRoutes, youtubeHeight, YOUTUBE_HEIGHTS } from "./youtube-innertube.js";
 import { createSabrBridge } from "./youtube-sabr.js";
 import { createProviderCache } from "./provider-cache.js";
 import { categoryLoaded } from './iptv-selection.js';
 import { validateConnection } from './connection-routes.js';
-import { createGoogleAuth } from "./google-auth.js";
 import { rateLimit } from "express-rate-limit";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -288,31 +286,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
       }));
     }))).flat();
   }
-  const googleAuth = createGoogleAuth({ fetchData, saveConfig, getConnection: (req, id) => ctx.getConnection(req, id) });
-  const googleToken = googleAuth.token;
-  async function youtubeRequest(req, c, pathname, params) {
-    const u = new URL(`https://www.googleapis.com/youtube/v3/${pathname}`);
-    const oauth =
-      c.config.authMode === "oauth" ||
-      (c.config.authMode !== "apiKey" &&
-        !!(c.config.refreshToken || c.config.accessToken));
-    if (!oauth && !c.config.apiKey)
-      throw providerError(
-        "Connect YouTube with Google or save an API key in settings.",
-      );
-    u.search = new URLSearchParams({
-      ...params,
-      ...(!oauth ? { key: c.config.apiKey } : {}),
-    });
-    return fetchData(
-      u,
-      oauth
-        ? {
-            headers: { Authorization: `Bearer ${await googleToken(req, c)}` },
-          }
-        : {},
-    );
-  }
   // What the transcoder found in each IPTV movie or episode, kept for six hours.
   const titleProbes = new Map();
   async function probeTitle(c, key, url) {
@@ -350,10 +323,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
   }
   const youtubeSignInLimit = rateLimit({ windowMs: 60000, limit: 6, keyGenerator: (req) => req.user.id, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many Google sign-in attempts. Try again in a minute." } });
   if (innertube) registerInnertubeRoutes(app, { connection, route, art, service: innertube, limiter: youtubeSignInLimit });
-  registerYouTubeBrowser(app, { connection, request: youtubeRequest, route, art, cached, cacheKey,
-    library: (req) => ctx.libraryState ? ctx.libraryState(req) : { progress: [] },
-    stars: (req) => ctx.stars ? ctx.stars(req) : [],
-  });
   if (!ctx.media) {
     app.get(["/api/media/:token", "/api/v1/media/:token"], media.handler);
     app.delete(["/api/media/:token", "/api/v1/media/:token"], media.releaseHandler);
@@ -418,14 +387,9 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           throw providerError(
             "The playlist contains no supported HTTP streams.",
           );
-      } else if (c.type === "youtube" && innertube?.mode(c)) {
-        await innertube.test(req, c);
       } else if (c.type === "youtube") {
-        await youtubeRequest(req, c, "videos", {
-          part: "id",
-          chart: "mostPopular",
-          maxResults: "1",
-        });
+        if (!innertube) throw providerError("YouTube is unavailable on this server.", 503);
+        await innertube.test(req, c);
       } else throw providerError("Unsupported connection type.");
       res.json({ ok: true, message: `${c.name} is connected.` });
     }),
@@ -585,32 +549,6 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
           categories: [
             ...new Set(entries.map((x) => x.category || '__ungrouped__')),
           ].map((x) => ({ id: x, name: x === '__ungrouped__' ? 'Uncategorized' : x })),
-        });
-      }
-      if (c.type === "youtube") {
-        const data = await youtubeRequest(req, c, "search", {
-          part: "snippet",
-          type: "video",
-          videoEmbeddable: "true",
-          maxResults: String(Math.min(p.limit, 50)),
-          q: p.q || "travel film 4k",
-          ...(req.query.pageToken
-            ? { pageToken: String(req.query.pageToken) }
-            : {}),
-        });
-        return res.json({
-          items: array(data.items).map((x) =>
-            itemBase(c, {
-              id: x.id.videoId,
-              title: cleanText(x.snippet.title),
-              type: "video",
-              poster: art(req, c, x.snippet.thumbnails?.high?.url),
-              description: cleanText(x.snippet.description),
-              subtitle: x.snippet.channelTitle,
-            }),
-          ),
-          hasMore: !!data.nextPageToken,
-          nextPageToken: data.nextPageToken,
         });
       }
       throw providerError("Unsupported library.");
@@ -804,5 +742,4 @@ export function registerProviderRoutes(app, ctx, dependencies = {}) {
     }),
   );
 
-  googleAuth.registerRoutes(app, { connection, route });
 }

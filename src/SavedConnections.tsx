@@ -57,19 +57,10 @@ export default function SavedConnections({ connections, busy, onTest, onEdit, on
               </button>
               {['xtream','m3u'].includes(c.type) && <button className="icon-button" disabled={busy}
                 aria-label={`Choose categories for ${c.name}`} title="Choose categories" onClick={() => onCategories(c)}><ListFilter size={18}/></button>}
-              {c.type === "youtube" && c.authMode === "innertube" && (
+              {c.type === "youtube" && (
                 <button className="button small ghost" disabled={busy} onClick={() => onEdit(c)}>
                   {c.oauthAuthorized ? "Google signed in" : "Sign in with Google"} <ArrowUpRight size={15} />
                 </button>
-              )}
-              {c.type === "youtube" && c.authMode === "oauth" && (
-                <a
-                  className="button small ghost"
-                  href={`/api/${c.type}/auth?connectionId=${encodeURIComponent(c.id)}`}
-                >
-                  {c.oauthAuthorized ? "Reconnect Google" : "Connect Google account"}{" "}
-                  <ArrowUpRight size={15} />
-                </a>
               )}
               </>}
               <button className="button small" onClick={() => onBrowse(c)}>

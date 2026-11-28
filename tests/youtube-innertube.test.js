@@ -213,7 +213,8 @@ test('device sign-in: start requests a code with the TV scopes, status polls Goo
   assert.equal(f.fetchCalls.length, 3);
   f.service._internal.pending.get('c1').nextPoll = 0;
   assert.deepEqual(await f.service.signInStatus(f.req, c), { status: 'authorized' });
-  assert.deepEqual(f.saved.at(-1), { authMode: 'innertube', tvAccessToken: 'at', tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000, tvScope: TV_SCOPES[1], tvBuiltinClientId: null, tvBuiltinClientSecret: null });
+  assert.deepEqual(f.saved.at(-1), { authMode: 'innertube', tvAccessToken: 'at', apiKey: null, clientId: null, clientSecret: null, accessToken: null, refreshToken: null, expiresAt: null, tvRefreshToken: 'rt', tvExpiresAt: NOW + 3600000, tvScope: TV_SCOPES[1], tvBuiltinClientId: null, tvBuiltinClientSecret: null });
+  // Settings of the retired Data API connection are dropped by the phone sign-in.
   assert.ok(f.service.signedIn(f.connections.get('c1')));
   // Another user cannot read the owner's pending code.
   assert.equal((await f.service.signInStatus({ user: { id: 'other' } }, c)).status, 'authorized');

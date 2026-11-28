@@ -146,27 +146,6 @@ test("URL policy rejects loopback, cloud metadata, mapped IPv6, credentials and 
   await assert.rejects(() => requestRemote("http://169.254.169.254/latest"));
 });
 
-test('OAuth token failures classify only known codes and keep provider details private', async t => {
-  assert.ok(lan, 'A local private interface is required for the provider fixture');
-  const app = express();
-  app.get('/:code', (req, res) => res.status(400).json({
-    error: req.params.code, error_description: 'client_secret=private-refresh-token',
-  }));
-  app.get('/malformed/body', (_req, res) => res.status(400).send('<html>private-refresh-token</html>'));
-  app.get('/oversized/body', (_req, res) => res.status(400).send('private-refresh-token'.repeat(2000)));
-  const server = await listen(app, '0.0.0.0');
-  t.after(() => server.close());
-  for (const code of ['invalid_grant', 'invalid_client', 'unknown_secret', 'malformed/body', 'oversized/body']) {
-    await assert.rejects(remoteData(server.url + '/' + code, { allowedPrivateHosts: [lan], oauthToken: true }), error => {
-      assert.equal(error.status, 502);
-      assert.equal(error.oauthCode, ['invalid_grant', 'invalid_client'].includes(code) ? code : undefined);
-      assert.ok(!JSON.stringify(error).includes('secret'));
-      assert.ok(!error.message.includes('private-refresh-token'));
-      return true;
-    });
-  }
-  await assert.rejects(remoteData(server.url + '/invalid_grant', { allowedPrivateHosts: [lan] }), error => error.oauthCode === undefined);
-});
 
 test("M3U parses quoted attributes, grouped channels, relative URLs and excludes unsafe schemes", () => {
   const list = parseM3U(
@@ -392,43 +371,15 @@ test(
   },
 );
 
-test("YouTube searches stay server-side", async (t) => {
+test("YouTube playback without InnerTube falls back to the resolver and keeps stream URLs private", async (t) => {
   const f = await fixture(t, {
     resolveYouTube: async (id) => {
       assert.equal(id, 'abcdefghijk');
       return { video: { url: 'https://test.googlevideo.com/video?token=private', headers: {} }, audio: { url: 'https://test.googlevideo.com/audio?token=private', headers: {} }, isLive: false };
     },
-    remoteData: async (input) => {
-      const u = new URL(input);
-      if (u.hostname === "www.googleapis.com") {
-        assert.equal(u.searchParams.get("key"), "youtube-api-secret");
-        assert.equal(u.searchParams.get("videoEmbeddable"), "true");
-        return {
-          items: [
-            {
-              id: { videoId: "abcdefghijk" },
-              snippet: {
-                title: "Film",
-                description: "Description",
-                thumbnails: {},
-              },
-            },
-          ],
-          nextPageToken: "yt-next",
-        };
-      }
-      throw new Error(`unexpected request ${u.hostname}`);
-    },
   });
-  const id = f.add("youtube", { apiKey: "youtube-api-secret" });
-  const list = await (
-    await f.request(`/api/catalog?connectionId=${id}&q=film`)
-  ).json();
-  assert.equal(list.nextPageToken, "yt-next");
-  assert.ok(!JSON.stringify(list).includes("secret"));
-  const video = await (
-    await f.request(`/api/playback?connectionId=${id}&itemId=abcdefghijk`)
-  ).json();
+  const id = f.add("youtube", { authMode: "innertube" });
+  const video = await (await f.request(`/api/playback?connectionId=${id}&itemId=abcdefghijk`)).json();
   assert.equal(video.type, "video");
   assert.equal(video.streamKind, "dual-input");
   assert.match(video.url, /^\/api\/media\//);
@@ -584,293 +535,13 @@ test("Xtream next episode follows numeric season/episode order independently of 
   );
 });
 
-test("YouTube OAuth binds provider and session, preserves/rotates offline tokens, and refreshes after restart", async (t) => {
-  const previous = process.env.PUBLIC_URL;
-  process.env.PUBLIC_URL = "https://tesplay.example";
-  t.after(() => {
-    if (previous === undefined) delete process.env.PUBLIC_URL;
-    else process.env.PUBLIC_URL = previous;
-  });
-  let authorizations = 0;
-  let refreshes = 0;
-  const remoteData = async (input, options = {}) => {
-    const u = new URL(input);
-    if (u.hostname === "oauth2.googleapis.com") {
-      const body = new URLSearchParams(options.body);
-      assert.equal(body.get("client_secret"), "oauth-client-secret");
-      if (body.get("grant_type") === "authorization_code") {
-        authorizations++;
-        assert.equal(
-          body.get("redirect_uri"),
-          "https://tesplay.example/api/youtube/callback",
-        );
-        assert.ok(body.get("code_verifier").length >= 43);
-        return {
-          access_token: "oauth-access-secret",
-          ...(authorizations === 1
-            ? { refresh_token: "oauth-refresh-secret" }
-            : {}),
-          expires_in: 3600,
-          scope: "https://www.googleapis.com/auth/youtube.readonly",
-        };
-      }
-      refreshes++;
-      assert.equal(body.get("refresh_token"), "oauth-refresh-secret");
-      return {
-        access_token: "renewed-access-secret",
-        refresh_token: "rotated-refresh-secret",
-        expires_in: 3600,
-      };
-    }
-    assert.equal(u.hostname, "www.googleapis.com");
-    assert.equal(u.searchParams.has("key"), false);
-    assert.equal(options.headers.Authorization, "Bearer renewed-access-secret");
-    return {
-      items: [
-        {
-          id: { videoId: "abcdefghijk" },
-          snippet: { title: "Film", thumbnails: {} },
-        },
-      ],
-    };
-  };
-  const f = await fixture(t, { remoteData });
-  const id = f.add("youtube", {
-    clientId: "oauth-client-id",
-    clientSecret: "oauth-client-secret",
-    authMode: "oauth",
-    apiKey: "unused-api-secret",
-  });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const begin = await f.request(`/api/youtube/auth?connectionId=${id}`, {
-      redirect: "manual",
-    });
-    assert.equal(begin.status, 302);
-    const authorization = new URL(begin.headers.get("location"));
-    assert.equal(
-      authorization.searchParams.get("scope"),
-      "https://www.googleapis.com/auth/youtube.readonly",
-    );
-    assert.equal(authorization.searchParams.get("access_type"), "offline");
-    assert.equal(
-      authorization.searchParams.get("code_challenge_method"),
-      "S256",
-    );
-    const query = `state=${authorization.searchParams.get("state")}&code=code`;
-    assert.equal(
-      (
-        await f.request(`/api/youtube/callback?${query}`, {
-          redirect: "manual",
-          headers: { "X-Session": "other" },
-        })
-      ).status,
-      400,
-    );
-    const callback = await f.request(`/api/youtube/callback?${query}`, {
-      redirect: "manual",
-    });
-    assert.equal(callback.status, 302);
-    assert.equal(callback.headers.get("location"), "/?connected=youtube");
-    assert.equal(
-      (
-        await f.request(`/api/youtube/callback?${query}`, {
-          redirect: "manual",
-        })
-      ).status,
-      400,
-    );
-    assert.equal(
-      f.connections.get(id).config.refreshToken,
-      "oauth-refresh-secret",
-    );
-  }
-  f.connections.get(id).config.expiresAt = 0;
-  const restarted = await fixture(t, {
-    remoteData,
-    connections: f.connections,
-    key: f.key,
-  });
-  const catalog = await (
-    await restarted.request(`/api/catalog?connectionId=${id}&q=film`)
-  ).json();
-  assert.equal(catalog.items[0].title, "Film");
-  assert.ok(!JSON.stringify(catalog).includes("secret"));
-  assert.equal(
-    f.connections.get(id).config.refreshToken,
-    "rotated-refresh-secret",
-  );
-  assert.equal(f.connections.get(id).config.authMode, "oauth");
-  await restarted.request(`/api/connections/${id}/test`, { method: "POST" });
-  assert.equal(refreshes, 1);
-});
 
-test('expired Google authorization reports reconnect instead of a gateway failure and recovers after reconnection', async t => {
-  let refreshes = 0, fail = true;
-  const f = await fixture(t, { remoteData: async (input, options = {}) => {
-    const url = new URL(input);
-    if (url.hostname === 'oauth2.googleapis.com') {
-      refreshes++;
-      assert.equal(options.oauthToken, true);
-      assert.ok(options.signal instanceof AbortSignal);
-      if (fail) throw Object.assign(new Error('Provider returned HTTP 400. private-token'), { status: 502, oauthCode: 'invalid_grant' });
-      return { access_token: 'new-access-secret', refresh_token: 'new-refresh-secret', expires_in: 3600 };
-    }
-    assert.equal(options.headers.Authorization, 'Bearer new-access-secret');
-    return { items: [] };
-  } });
-  const id = f.add('youtube', { authMode: 'oauth', clientId: 'client', clientSecret: 'client-secret', accessToken: 'old-secret', refreshToken: 'revoked-secret', expiresAt: 0 });
-  for (const endpoint of ['subscriptions', 'playlists', 'search?q=film']) {
-    const response = await f.request(`/api/youtube/${id}/${endpoint}`);
-    assert.equal(response.status, 409);
-    const body = await response.json();
-    assert.match(body.error, /authorization.*expired.*Connections.*reconnect/);
-    assert.ok(!JSON.stringify(body).includes('secret'));
-    assert.ok(!JSON.stringify(body).includes('private-token'));
-  }
-  fail = false;
-  assert.equal((await f.request(`/api/youtube/${id}/subscriptions`)).status, 200);
-  assert.equal(f.connections.get(id).config.refreshToken, 'new-refresh-secret');
-  assert.equal(refreshes, 4);
-});
 
-test('parallel YouTube browsing shares one token refresh and persists its rotated token', async t => {
-  let refreshes = 0, release;
-  const pending = new Promise(resolve => { release = resolve; });
-  let started;
-  const ready = new Promise(resolve => { started = resolve; });
-  const f = await fixture(t, { remoteData: async (input, options = {}) => {
-    const url = new URL(input);
-    if (url.hostname === 'oauth2.googleapis.com') {
-      refreshes++; started(); await pending;
-      return { access_token: 'shared-access-secret', refresh_token: 'rotated-secret', expires_in: 3600 };
-    }
-    assert.equal(options.headers.Authorization, 'Bearer shared-access-secret');
-    return { items: [] };
-  } });
-  const id = f.add('youtube', { authMode: 'oauth', clientId: 'client', clientSecret: 'secret', refreshToken: 'old-refresh-secret', expiresAt: 0 });
-  const responses = ['subscriptions', 'playlists', 'search?q=film'].map(endpoint => f.request(`/api/youtube/${id}/${endpoint}`));
-  await ready;
-  await new Promise(resolve => setImmediate(resolve));
-  release();
-  for (const response of await Promise.all(responses)) assert.equal(response.status, 200);
-  assert.equal(refreshes, 1);
-  assert.equal(f.connections.get(id).config.refreshToken, 'rotated-secret');
-  assert.equal((await f.request(`/api/youtube/${id}/subscriptions`)).status, 200);
-  assert.equal(refreshes, 1);
-});
 
-test('Google refresh retains server-wide OAuth client defaults after moving into the auth module', async t => {
-  const previousId = process.env.GOOGLE_CLIENT_ID, previousSecret = process.env.GOOGLE_CLIENT_SECRET;
-  process.env.GOOGLE_CLIENT_ID = 'server-client-id';
-  process.env.GOOGLE_CLIENT_SECRET = 'server-client-secret';
-  t.after(() => {
-    if (previousId === undefined) delete process.env.GOOGLE_CLIENT_ID;
-    else process.env.GOOGLE_CLIENT_ID = previousId;
-    if (previousSecret === undefined) delete process.env.GOOGLE_CLIENT_SECRET;
-    else process.env.GOOGLE_CLIENT_SECRET = previousSecret;
-  });
-  const f = await fixture(t, { remoteData: async (input, options = {}) => {
-    if (new URL(input).hostname === 'oauth2.googleapis.com') {
-      const body = new URLSearchParams(options.body);
-      assert.equal(body.get('client_id'), 'server-client-id');
-      assert.equal(body.get('client_secret'), 'server-client-secret');
-      assert.equal(body.get('refresh_token'), 'existing-refresh-secret');
-      return { access_token: 'renewed-access-secret', expires_in: 3600 };
-    }
-    assert.equal(options.headers.Authorization, 'Bearer renewed-access-secret');
-    return { items: [] };
-  } });
-  const id = f.add('youtube', { authMode: 'oauth', refreshToken: 'existing-refresh-secret', expiresAt: 0 });
-  assert.equal((await f.request(`/api/youtube/${id}/subscriptions`)).status, 200);
-  assert.equal(f.connections.get(id).config.refreshToken, 'existing-refresh-secret');
-  assert.equal(f.connections.get(id).config.clientSecret, undefined);
-});
 
-test('Google client configuration errors request a settings repair without changing transient failures', async t => {
-  let oauthCode = 'invalid_client';
-  const f = await fixture(t, { remoteData: async () => {
-    throw Object.assign(new Error('Provider returned HTTP 503. Check the connection and permissions.'), { status: 502, oauthCode });
-  } });
-  const id = f.add('youtube', { authMode: 'oauth', refreshToken: 'secret' });
-  const invalid = await f.request(`/api/youtube/${id}/subscriptions`);
-  assert.equal(invalid.status, 409);
-  assert.match((await invalid.json()).error, /client ID and secret in Connections/);
-  oauthCode = undefined;
-  const transient = await f.request(`/api/youtube/${id}/subscriptions`);
-  assert.equal(transient.status, 502);
-  assert.match((await transient.json()).error, /HTTP 503/);
-});
 
-test("YouTube explicit auth mode selects API key or OAuth without silent fallback", async (t) => {
-  const f = await fixture(t, {
-    remoteData: async (input, options = {}) => {
-      const u = new URL(input);
-      assert.equal(u.searchParams.get("key"), "active-api-key");
-      assert.equal(options.headers?.Authorization, undefined);
-      return { items: [] };
-    },
-  });
-  const id = f.add("youtube", {
-    authMode: "apiKey",
-    apiKey: "active-api-key",
-    accessToken: "unused-oauth-secret",
-    expiresAt: Date.now() + 3600000,
-  });
-  assert.equal(
-    (await f.request(`/api/catalog?connectionId=${id}`)).status,
-    200,
-  );
-  f.connections.get(id).config = {
-    authMode: "oauth",
-    apiKey: "active-api-key",
-  };
-  assert.equal(
-    (await f.request(`/api/catalog?connectionId=${id}`)).status,
-    400,
-  );
-});
 
-test('YouTube personal browsing uses OAuth, paginates subscriptions and opens channel uploads', async t => {
-  const channel = 'UC' + 'a'.repeat(22), upload = 'UU' + 'a'.repeat(22);
-  const f = await fixture(t, { stars:[{connectionId:'1',kind:'channel',id:channel,title:'Subscribed channel'}], remoteData: async (input, options) => {
-    const u = new URL(input); assert.equal(options.headers.Authorization, 'Bearer google-secret'); assert.equal(u.searchParams.has('key'), false);
-    if (u.pathname.endsWith('/subscriptions')) {
-      assert.equal(u.searchParams.get('mine'), 'true');
-      if (u.searchParams.get('pageToken') === 'next') return { items: [], pageInfo: { totalResults: 1 } };
-      return { items: [{ snippet: { title: 'Subscribed channel', resourceId: { channelId: channel }, thumbnails: {} }, contentDetails: { totalItemCount: 9 } }], nextPageToken: 'next', pageInfo: { totalResults: 1 } };
-    }
-    if (u.pathname.endsWith('/channels')) return { items: [{ contentDetails: { relatedPlaylists: { uploads: upload } } }] };
-    if (u.pathname.endsWith('/playlistItems')) {
-      assert.equal(u.searchParams.get('playlistId'), upload);
-      return { items: [{ contentDetails: { videoId: 'abcdefghijk', videoPublishedAt: '2026-09-30T10:00:00Z' }, snippet: { title: 'Channel upload', channelId: channel, thumbnails: {} } }] };
-    }
-    if (u.pathname.endsWith('/playlists')) return { items: [{ id: 'PLabcdefghijk', snippet: { title: 'My playlist' }, contentDetails: { itemCount: 5 } }] };
-    throw Error('Unexpected request');
-  } });
-  const id = f.add('youtube', { authMode: 'oauth', accessToken: 'google-secret', expiresAt: Date.now() + 3600000 });
-  const list = await (await f.request(`/api/youtube/${id}/subscriptions`)).json();
-  assert.equal(list.channels[0].id, channel); assert.equal(list.nextPageToken, 'next');
-  assert.deepEqual((await (await f.request(`/api/youtube/${id}/subscriptions?pageToken=next`)).json()).channels, []);
-  const videos = await (await f.request(`/api/youtube/${id}/channel/${channel}/videos`)).json();
-  assert.equal(videos.items[0].channelId, channel); assert.equal(videos.items[0].id, 'abcdefghijk');
-  const feed = await (await f.request(`/api/youtube/${id}/feed`)).json();
-  assert.equal(feed.items[0].title, 'Channel upload'); assert.equal(feed.basis, 'starred-subscriptions');
-  const playlists = await (await f.request(`/api/youtube/${id}/playlists`)).json(); assert.equal(playlists.playlists[0].title, 'My playlist');
-  assert.equal((await f.request(`/api/youtube/${id}/channel/bad/videos`)).status, 400);
-  assert.equal((await f.request(`/api/youtube/${id}/feed?offset=-1`)).status, 400);
-  assert.ok(!JSON.stringify({ list, videos, feed, playlists }).includes('google-secret'));
-  const publicId = f.add('youtube', { authMode: 'apiKey', apiKey: 'secret' });
-  assert.equal((await f.request(`/api/youtube/${publicId}/subscriptions`)).status, 409);
-  assert.equal((await f.request(`/api/youtube/${publicId}/playlists`)).status, 409);
-  assert.equal((await f.request(`/api/youtube/${publicId}/feed`)).status, 409);
-});
 
-test('YouTube search returns matching channels above videos with decoded titles and unchanged video IDs',async t=>{
- const calls=[],id='UC'+'a'.repeat(22);
- const f=await fixture(t,{remoteData:async input=>{const u=new URL(input);if(u.pathname.endsWith('/videos'))return {items:[{id:'abcdefghijk',contentDetails:{duration:'PT10M'}}]};calls.push(u.searchParams.get('type'));return u.searchParams.get('type')==='channel'?{items:[{id:{channelId:id},snippet:{title:'Channel &amp; Friends'}}]}:{items:[{id:{videoId:'abcdefghijk'},snippet:{title:'&#39;You&#39;re a Racist BIGOT!&#39;',channelTitle:'Channel &amp; Friends'}}],nextPageToken:'next'};}});
- const c=f.add('youtube',{authMode:'apiKey',apiKey:'fixture'});
- const data=await (await f.request(`/api/youtube/${c}/search?q=Channel`)).json();assert.deepEqual(calls.sort(),['channel','video']);assert.equal(data.channels[0].id,id);assert.equal(data.channels[0].title,'Channel & Friends');assert.equal(data.items[0].title,"'You're a Racist BIGOT!'");assert.equal(data.items[0].id,'abcdefghijk');assert.equal(data.nextPageToken,'next');
-});
 
 test('media requests reuse an authorized provider connection while forbidden addresses remain blocked',async t=>{
  if(!lan)return t.skip('No private LAN address');let opened=0;
@@ -937,12 +608,6 @@ test('a pending manual IPTV refresh does not delay readers of the saved catalog'
   assert.equal((await(await f.request(endpoint)).json()).items[0].title,'New film');
 });
 
-test('YouTube browsing adds durations in one batched metadata call and leaves unknown durations visible',async t=>{
-  const calls=[],channel='UC'+'a'.repeat(22);
-  const f=await fixture(t,{remoteData:async input=>{const u=new URL(input);calls.push(u.pathname);if(u.pathname.endsWith('/channels'))return {items:[{contentDetails:{relatedPlaylists:{uploads:'UU'+'a'.repeat(22)}}}]};if(u.pathname.endsWith('/playlistItems'))return {items:[{contentDetails:{videoId:'abcdefghijk'},snippet:{title:'Short',channelId:channel}},{contentDetails:{videoId:'lmnopqrstuv'},snippet:{title:'Long',channelId:channel}},{contentDetails:{videoId:'zzzzzzzzzzz'},snippet:{title:'Unknown',channelId:channel}}]};if(u.pathname.endsWith('/videos')){assert.equal(u.searchParams.get('part'),'contentDetails');return {items:[{id:'abcdefghijk',contentDetails:{duration:'PT3M'}},{id:'lmnopqrstuv',contentDetails:{duration:'PT1H2M3S'}}]};}throw Error('Unexpected request');}});
-  const id=f.add('youtube',{authMode:'apiKey',apiKey:'secret'});
-  const result=await(await f.request(`/api/youtube/${id}/channel/${channel}/videos`)).json();assert.equal(result.items[0].duration,180);assert.equal(result.items[1].duration,3723);assert.equal(result.items[2].duration,undefined);assert.equal(calls.filter(p=>p.endsWith('/videos')).length,1);
-});
 
 test("YouTube playback resolves through InnerTube first and keeps yt-dlp as the fallback", async (t) => {
   const calls = [];
