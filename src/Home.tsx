@@ -110,7 +110,8 @@ export default function Home({ cacheIdentity, connections, library: rawLibrary, 
         </div>
         {editing && <p className="home-edit-help">Move sections up or down, or hide the ones you do not use. Your arrangement is saved to your account and used on every screen.</p>}
         {!connections.length && pending.length === 0 && <p className="home-intro">{canManage ? 'Bring your channels and videos into TesPlay. Start with a library below.' : 'Your server owner can share connections with your account.'}</p>}
-        {connected ? connections.map(c => <div key={c.id}>
+        {/* Connection notices on Home are for IPTV and other libraries; YouTube is browsed from its own page. */}
+        {connected ? connections.filter(c => c.type !== 'youtube').map(c => <div key={c.id}>
           {visibleResults[c.id]?.issues.map((issue, index) => <div className="home-source-status" role="status" key={index}><div><strong>{c.type === 'youtube' ? 'YouTube' : c.name}</strong><p>{issue}</p></div><button className="text-button" onClick={() => onBrowse(c)}>Open connection <ArrowUpRight size={16} /></button></div>)}
           {!pending.includes(c.id) && visibleResults[c.id] && !visibleResults[c.id].issues.length && !visibleResults[c.id].shelves.some(s => s.items.length) && <div className="home-source-status"><div><strong>{c.type === 'youtube' ? 'YouTube' : c.name}</strong><p>{hideYouTubeShorts && results[c.id]?.shelves.some(s => s.items.length) ? 'Short videos are hidden. Change this in Settings or browse another library.' : c.type === 'youtube' ? 'Star subscriptions in YouTube to show their latest uploads here.' : 'No titles in this preview yet.'}</p></div><button className="text-button" onClick={() => onBrowse(c)}>Browse library <ArrowUpRight size={16} /></button></div>}
         </div>) : canManage ? null : <Empty title="No libraries shared yet">Your server owner can share connections with your account.</Empty>}

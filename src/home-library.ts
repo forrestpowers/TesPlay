@@ -35,7 +35,16 @@ export async function loadHomeConnection(c: Connection, request: Request, signal
       collect(await Promise.allSettled(catalogs.map(entry => catalog(entry.type, '', entry.id))), catalogs.map(entry=>entry.name),
         (result,index)=>shelf(catalogs[index].id,catalogs[index].name,result.items,{kind:catalogs[index].type,category:catalogs[index].id}));
     } else if (c.type === 'youtube') {
-      if (c.authMode !== 'oauth' || !c.oauthAuthorized) return { shelves, issues: ['Connect Google in YouTube settings to load your subscription videos.'] };
+      // YouTube signed in on the screen (InnerTube): the latest uploads from your subscriptions.
+      if (c.authMode === 'innertube') {
+        if (!c.oauthAuthorized) return { shelves, issues: [] };
+        const data = await request(`/youtube/${encodeURIComponent(c.id)}/feed`, signal);
+        signal.throwIfAborted();
+        shelf('subscriptions', 'YouTube · Latest from your subscriptions', data.items || []);
+        return { shelves, issues };
+      }
+      // The older Google authorization: starred channels. Without either, Home has no YouTube rows.
+      if (c.authMode !== 'oauth' || !c.oauthAuthorized) return { shelves, issues: [] };
       const offsets=new Set<number>(); let offset: number | undefined;
       do {
         const data = await request(`/youtube/${encodeURIComponent(c.id)}/feed${offset===undefined?'':`?offset=${offset}`}`, signal);

@@ -46,7 +46,7 @@ test('IPTV home requests only starred live categories, without movie or series p
   const empty=await loadHomeConnection(connection('m3u'),()=>{throw Error('No unstarred channels should be requested');},new AbortController().signal);
   assert.deepEqual(empty.shelves,[]);assert.deepEqual(empty.issues,[]);
 });
-test('YouTube home uses subscriptions instead of a public demo search and reports missing authorization', async () => {
+test('YouTube home uses subscriptions instead of a public demo search, and stays quiet without authorization', async () => {
   let path = '';
   const c = { ...connection('youtube'), authMode: 'oauth', oauthAuthorized: true };
   const result = await loadHomeConnection(c, async p => { path = p; return { items: [item('Subscribed upload', 'video', 'youtube')], partial: true }; }, new AbortController().signal);
@@ -55,7 +55,19 @@ test('YouTube home uses subscriptions instead of a public demo search and report
   assert.equal(result.issues.length, 1);
   const denied = await loadHomeConnection({ ...c, authMode: 'apiKey' }, () => { throw Error('Must not request public demo search'); }, new AbortController().signal);
   assert.equal(denied.shelves.length, 0);
-  assert.match(denied.issues[0], /Connect Google/);
+  assert.deepEqual(denied.issues, [], 'no notice on Home');
+});
+test('YouTube signed in on the screen shows the latest from your subscriptions on Home', async () => {
+  const paths = [];
+  const signedIn = { ...connection('youtube'), authMode: 'innertube', oauthAuthorized: true };
+  const result = await loadHomeConnection(signedIn, async p => { paths.push(p); return { items: [item('New upload', 'video', 'youtube')], channelRows: [], basis: 'subscriptions' }; }, new AbortController().signal);
+  assert.deepEqual(paths, ['/youtube/youtube/feed']);
+  assert.equal(result.shelves.length, 1);
+  assert.equal(result.shelves[0].title, 'YouTube · Latest from your subscriptions');
+  assert.equal(result.shelves[0].items[0].title, 'New upload');
+  assert.deepEqual(result.issues, []);
+  const signedOut = await loadHomeConnection({ ...signedIn, oauthAuthorized: false }, () => { throw Error('Must not request the feed signed out'); }, new AbortController().signal);
+  assert.deepEqual(signedOut, { shelves: [], issues: [] });
 });
 test('Drive and local home previews bound folder expansion and preserve direct files', async () => {
   for (const type of ['drive', 'local']) {
